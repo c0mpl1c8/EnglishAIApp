@@ -2,6 +2,10 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { GoogleGenAI } from '@google/genai'
+import 'dotenv/config'
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
 function createWindow() {
   // Create the browser window.
@@ -51,7 +55,22 @@ app.whenReady().then(() => {
 
   // IPC test
   ipcMain.on('ping', () => console.log('pong'))
+    ipcMain.handle('assess-placement', async (event, { targetLanguage, answer }) => {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: `Học viên đang học ${targetLanguage}. Đây là bài viết mẫu của họ: "${answer}".
+Hãy đánh giá trình độ CEFR (A1-C2) dựa trên ngữ pháp, từ vựng, độ phức tạp câu.
+Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedback": "nhận xét ngắn gọn bằng tiếng Việt"}`
+      })
 
+      const text = response.text.replace(/```json|```/g, '').trim()
+      return JSON.parse(text)
+    } catch (error) {
+      console.error('Gemini error:', error)
+      return { level: 'unknown', feedback: 'Có lỗi xảy ra, thử lại sau.' }
+    }
+  })
   createWindow()
 
   app.on('activate', function () {

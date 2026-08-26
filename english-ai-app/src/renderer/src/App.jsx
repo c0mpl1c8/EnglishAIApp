@@ -7,6 +7,8 @@ function App() {
     targetLanguage:'',
     goal:''
   })
+  const [isLoading, setIsLoading] = useState(false)
+  const [placementResult, setPlacementResult] = useState(null)
   const handleNext = () => {
     setStep(step + 1)
   }
@@ -14,7 +16,21 @@ function App() {
   const handleChange = (field, value) =>{
     setProfile({...profile,[field]:value})
   }
-
+  const handleSubmitPlacement = async () => {
+  setIsLoading(true)
+  try {
+    const result = await window.api.assessPlacement({
+      targetLanguage: profile.targetLanguage,
+      answer: profile.placementAnswer
+    })
+    setPlacementResult(result)
+    handleNext()
+  } catch (error) {
+    console.error('Error:', error)
+  } finally {
+    setIsLoading(false)
+  }
+}
   if(step==1){
     return(
       <div style={styles.container}>
@@ -73,36 +89,42 @@ function App() {
     )
   }
 
- if (step === 4) {
-    return (
-      <div style={styles.container}>
-        <h2 style={styles.question}>Đánh giá trình độ</h2>
-        <p>Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.</p>
-        <textarea
-          style={styles.textarea}
-          placeholder="Type your answer here..."
-          value={profile.placementAnswer || ''}
-          onChange={(e) => handleChange('placementAnswer', e.target.value)}
-        />
-        <button
-          style={styles.button}
-          onClick={handleNext}
-          disabled={!profile.placementAnswer}
-        >
-          Nộp bài
-        </button>
-      </div>
-    )
-  }
-
+if (step === 4) {
   return (
     <div style={styles.container}>
-      <h2 style={styles.question}>Hoàn tất!</h2>
-      <p>Ngôn ngữ mẹ đẻ: {profile.nativeLanguage}</p>
-      <p>Ngôn ngữ muốn học: {profile.targetLanguage}</p>
-      <p>Mục tiêu: {profile.goal}</p>
-      <p>Câu trả lời placement: {profile.placementAnswer}</p>
+      <h2 style={styles.question}>Đánh giá trình độ</h2>
+      <p>Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.</p>
+      <textarea
+        style={styles.textarea}
+        placeholder="Type your answer here..."
+        value={profile.placementAnswer || ''}
+        onChange={(e) => handleChange('placementAnswer', e.target.value)}
+        disabled={isLoading}
+      />
+      <button
+        style={styles.button}
+        onClick={handleSubmitPlacement}
+        disabled={!profile.placementAnswer || isLoading}
+      >
+        {isLoading ? 'Đang chấm điểm...' : 'Nộp bài'}
+      </button>
     </div>
+  )
+}
+
+  return (
+  <div style={styles.container}>
+    <h2 style={styles.question}>Hoàn tất!</h2>
+    <p>Ngôn ngữ mẹ đẻ: {profile.nativeLanguage}</p>
+    <p>Ngôn ngữ muốn học: {profile.targetLanguage}</p>
+    <p>Mục tiêu: {profile.goal}</p>
+    {placementResult && (
+      <>
+        <p><strong>Trình độ ước tính: {placementResult.level}</strong></p>
+        <p>{placementResult.feedback}</p>
+      </>
+    )}
+  </div>
   )
 }
 
