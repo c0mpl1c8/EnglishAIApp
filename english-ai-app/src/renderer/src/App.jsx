@@ -18,7 +18,7 @@ function App() {
   if(step==1){
     return(
       <div style={styles.container}>
-        <h2>Bạn nói ngôn ngữ nào?</h2>
+       <h2 style={styles.question}>Bạn nói ngôn ngữ nào?</h2>
         <input
           style={styles.input}
           type="text"
@@ -36,7 +36,7 @@ function App() {
   if(step == 2){
     return(
        <div style={styles.container}>
-        <h2>Bạn muốn học ngôn ngữ nào?</h2>
+        <h2 style={styles.question}>Bạn muốn học ngôn ngữ nào?</h2>
         <input
           style={styles.input}
           type="text"
@@ -54,7 +54,7 @@ function App() {
   if (step == 3){
      return (
       <div style={styles.container}>
-        <h2>Mục tiêu học của bạn là gì?</h2>
+        <h2 style={styles.question}>Mục tiêu học của bạn là gì?</h2>
         <select
           style={styles.input}
           value={profile.goal}
@@ -73,12 +73,35 @@ function App() {
     )
   }
 
+ if (step === 4) {
+    return (
+      <div style={styles.container}>
+        <h2 style={styles.question}>Đánh giá trình độ</h2>
+        <p>Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.</p>
+        <textarea
+          style={styles.textarea}
+          placeholder="Type your answer here..."
+          value={profile.placementAnswer || ''}
+          onChange={(e) => handleChange('placementAnswer', e.target.value)}
+        />
+        <button
+          style={styles.button}
+          onClick={handleNext}
+          disabled={!profile.placementAnswer}
+        >
+          Nộp bài
+        </button>
+      </div>
+    )
+  }
+
   return (
-     <div style={styles.container}>
-      <h2>Hoàn tất!</h2>
+    <div style={styles.container}>
+      <h2 style={styles.question}>Hoàn tất!</h2>
       <p>Ngôn ngữ mẹ đẻ: {profile.nativeLanguage}</p>
       <p>Ngôn ngữ muốn học: {profile.targetLanguage}</p>
       <p>Mục tiêu: {profile.goal}</p>
+      <p>Câu trả lời placement: {profile.placementAnswer}</p>
     </div>
   )
 }
@@ -90,25 +113,59 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     height: '100vh',
-    gap: '16px',
-    fontFamily: 'sans-serif'
+    width: '100vw',
+    gap: '24px',
+    fontFamily: "'Segoe UI', sans-serif",
+    background: 'radial-gradient(circle at 30% 30%, #e9d5ff 0%, #ffffff 50%, #ffffff 100%)',
+    color: '#1a1a1a',
+    padding: '20px',
+    boxSizing: 'border-box',
+    textAlign: 'center'
+  },
+  question: {
+    fontFamily: "'Segoe UI', sans-serif",
+    fontSize: '32px',
+    fontWeight: '700',
+    color: '#111111',
+    margin: 0
   },
   input: {
-    padding: '10px',
+    padding: '14px 20px',
     fontSize: '16px',
-    width: '250px',
-    borderRadius: '6px',
-    border: '1px solid #ccc'
+    width: '320px',
+    borderRadius: '999px',
+    border: '1.5px solid #d4d4d8',
+    background: '#ffffff',
+    color: '#1a1a1a',
+    outline: 'none',
+    textAlign: 'center'
+  },
+  textarea: {
+    padding: '14px 20px',
+    fontSize: '16px',
+    width: '380px',
+    height: '110px',
+    borderRadius: '20px',
+    border: '1.5px solid #d4d4d8',
+    background: '#ffffff',
+    color: '#1a1a1a',
+    fontFamily: "'Segoe UI', sans-serif",
+    outline: 'none',
+    resize: 'none'
   },
   button: {
-    padding: '10px 20px',
-    fontSize: '16px',
-    borderRadius: '6px',
-    border: 'none',
-    background: '#4a90d9',
-    color: 'white',
-    cursor: 'pointer'
+    padding: '14px 36px',
+    fontSize: '15px',
+    fontWeight: '700',
+    letterSpacing: '0.5px',
+    borderRadius: '999px',
+    border: '1.5px solid #111111',
+    background: '#ffffff',
+    color: '#111111',
+    cursor: 'pointer',
+    textTransform: 'uppercase'
   }
 }
+
 
 export default App
