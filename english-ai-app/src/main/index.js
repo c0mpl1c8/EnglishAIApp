@@ -92,6 +92,38 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
     }
   })
 
+  ipcMain.handle('send-chat-message', async (event, { cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
+    try {
+      const systemContext = `Bạn là một gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}, mục tiêu học: ${goal}.
+
+QUY TẮC NGÔN NGỮ (rất quan trọng):
+- Nếu trình độ là A1 hoặc A2: LUÔN trả lời song ngữ — câu bằng ${targetLanguage} trước, kèm bản dịch ngắn gọn bằng ${nativeLanguage} ngay sau (trong ngoặc), để học viên hiểu được.
+- Nếu trình độ là B1 trở lên: trả lời chủ yếu bằng ${targetLanguage}, chỉ dùng ${nativeLanguage} khi giải thích lỗi ngữ pháp phức tạp.
+
+Điều chỉnh độ khó từ vựng/ngữ pháp phù hợp trình độ ${cefrLevel}. Nếu học viên mắc lỗi, nhẹ nhàng sửa lỗi đó ngay trong câu trả lời.`
+      const contents = [
+        { role: 'user', parts: [{ text: systemContext }] },
+        { role: 'model', parts: [{ text: 'Đã hiểu, tôi sẽ trò chuyện phù hợp với trình độ học viên.' }] },
+        ...history.map(h => ({
+          role: h.role === 'user' ? 'user' : 'model',
+          parts: [{ text: h.text }]
+        })),
+        { role: 'user', parts: [{ text: message }] }
+      ]
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents
+      })
+
+      return { success: true, reply: response.text }
+    } catch (error) {
+      console.error('Chat error:', error)
+      return { success: false, reply: 'Có lỗi xảy ra, thử lại sau.' }
+    }
+  })
+
+
   createWindow()
 
   app.on('activate', function () {

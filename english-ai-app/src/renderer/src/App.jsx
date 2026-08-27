@@ -9,6 +9,9 @@ function App() {
   })
   const [isLoading, setIsLoading] = useState(false)
   const [placementResult, setPlacementResult] = useState(null)
+  const [chatHistory, setChatHistory] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [isChatLoading, setIsChatLoading] = useState(false)
   const handleNext = () => {
     setStep(step + 1)
   }
@@ -31,7 +34,7 @@ function App() {
       goal: profile.goal,
       cefrLevel: result.level,
       feedback: result.feedback
-      
+
     })
     handleNext()
   } catch (error) {
@@ -40,6 +43,34 @@ function App() {
     setIsLoading(false)
   }
 }
+
+const handleSendMessage = async () => {
+  if (!chatInput.trim()) return
+
+  const userMessage = { role: 'user', text: chatInput }
+  const newHistory = [...chatHistory, userMessage]
+  setChatHistory(newHistory)
+  setChatInput('')
+  setIsChatLoading(true)
+
+  try {
+    const result = await window.api.sendChatMessage({
+      cefrLevel: placementResult?.level || 'A1',
+      targetLanguage: profile.targetLanguage,
+      nativeLanguage: profile.nativeLanguage,
+      goal: profile.goal,
+      history: chatHistory,
+      message: userMessage.text
+    })
+    setChatHistory([...newHistory, { role: 'model', text: result.reply }])
+  } catch (error) {
+    console.error('Error:', error)
+  } finally {
+    setIsChatLoading(false)
+  }
+}
+
+
   if(step==1){
     return(
       <div style={styles.container}>
@@ -121,22 +152,64 @@ if (step === 4) {
   )
 }
 
-  return (
-  <div style={styles.container}>
-    <h2 style={styles.question}>Hoàn tất!</h2>
-    <p>Ngôn ngữ mẹ đẻ: {profile.nativeLanguage}</p>
-    <p>Ngôn ngữ muốn học: {profile.targetLanguage}</p>
-    <p>Mục tiêu: {profile.goal}</p>
-    {placementResult && (
-      <>
-        <p><strong>Trình độ ước tính: {placementResult.level}</strong></p>
-        <p>{placementResult.feedback}</p>
-      </>
-    )}
+return (
+  <div style={{ ...styles.container, justifyContent: 'flex-start', paddingTop: '30px' }}>
+    <h2 style={styles.question}>Luyện tập cùng AI</h2>
+    <p style={{ fontSize: '14px', color: '#666' }}>
+      Trình độ: {placementResult?.level} | Mục tiêu: {profile.goal}
+    </p>
+
+    <div style={styles.chatBox}>
+  {chatHistory.map((msg, i) => (
+  <div
+    key={i}
+    style={{
+      ...styles.chatBubble,
+      alignSelf: msg.role === 'user' ? 'flex-end' : 'flex-start',
+      background: msg.role === 'user' ? '#111111' : '#f0f0f0',
+      color: msg.role === 'user' ? '#ffffff' : '#111111'
+    }}
+  >
+    {formatMessage(msg.text)}
   </div>
-  )
+))}
+      {isChatLoading && <div style={styles.chatBubble}>Đang trả lời...</div>}
+    </div>
+
+    <div style={{ display: 'flex', gap: '10px', width: '500px' }}>
+      <input
+        style={{ ...styles.input, width: '100%' }}
+        value={chatInput}
+        onChange={(e) => setChatInput(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+        placeholder="Nhập tin nhắn..."
+        disabled={isChatLoading}
+      />
+      <button style={styles.button} onClick={handleSendMessage} disabled={isChatLoading}>
+        Gửi
+      </button>
+    </div>
+  </div>
+)
 }
 
+function formatMessage(text) {
+  const lines = text.split('\n')
+  return lines.map((line, i) => {
+    const parts = line.split(/(\*\*.*?\*\*)/g)
+    return (
+      <div key={i} style={{ marginBottom: line.trim() ? '6px' : '0' }}>
+        {parts.map((part, j) =>
+          part.startsWith('**') && part.endsWith('**') ? (
+            <strong key={j}>{part.slice(2, -2)}</strong>
+          ) : (
+            part
+          )
+        )}
+      </div>
+    )
+  })
+}
 const styles = {
   container: {
     display: 'flex',
@@ -195,7 +268,29 @@ const styles = {
     color: '#111111',
     cursor: 'pointer',
     textTransform: 'uppercase'
-  }
+  },
+
+
+  chatBox: {
+  width: '500px',
+  height: '350px',
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '10px',
+  padding: '16px',
+  border: '1.5px solid #d4d4d8',
+  borderRadius: '16px',
+  background: '#ffffff'
+},
+chatBubble: {
+  padding: '10px 16px',
+  lineHeight: '1.5',
+  borderRadius: '16px',
+  maxWidth: '75%',
+  fontSize: '15px',
+  textAlign: 'left'
+},
 }
 
 
