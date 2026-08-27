@@ -4,7 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { GoogleGenAI } from '@google/genai'
 import 'dotenv/config'
-
+import db from './db.js'
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
 function createWindow() {
@@ -71,6 +71,27 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
       return { level: 'unknown', feedback: 'Có lỗi xảy ra, thử lại sau.' }
     }
   })
+
+    ipcMain.handle('save-profile', async (event, profileData) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO profile (native_language, target_language, goal, cefr_level, feedback)
+        VALUES (?, ?, ?, ?, ?)
+      `)
+      const result = stmt.run(
+        profileData.nativeLanguage,
+        profileData.targetLanguage,
+        profileData.goal,
+        profileData.cefrLevel,
+        profileData.feedback
+      )
+      return { success: true, id: result.lastInsertRowid }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
   createWindow()
 
   app.on('activate', function () {

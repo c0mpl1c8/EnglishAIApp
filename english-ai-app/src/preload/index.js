@@ -3,7 +3,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 
 // Custom APIs for renderer
 const api = {
-  assessPlacement: (data) => ipcRenderer.invoke('assess-placement', data)
+  assessPlacement: (data) => ipcRenderer.invoke('assess-placement', data),
+  saveProfile: (data) => ipcRenderer.invoke('save-profile', data)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

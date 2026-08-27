@@ -24,6 +24,15 @@ function App() {
       answer: profile.placementAnswer
     })
     setPlacementResult(result)
+
+    await window.api.saveProfile({
+      nativeLanguage: profile.nativeLanguage,
+      targetLanguage: profile.targetLanguage,
+      goal: profile.goal,
+      cefrLevel: result.level,
+      feedback: result.feedback
+      
+    })
     handleNext()
   } catch (error) {
     console.error('Error:', error)
