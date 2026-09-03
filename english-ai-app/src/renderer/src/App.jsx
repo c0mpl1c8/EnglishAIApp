@@ -1,4 +1,38 @@
 import { useState } from "react";
+const fadeStyle = `
+  .fade-in {
+    transform: translate3d(40px, 0, 0);
+    animation: slideIn 1000ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    will-change: transform;
+  }
+
+  @keyframes slideIn {
+    from {
+      transform: translate3d(40px, 0, 0);
+    }
+    to {
+      transform: translate3d(0, 0, 0);
+    }
+  }
+`;
+function ProgressDots({ current, total }) {
+  return (
+    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+      {Array.from({ length: total }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            width: i === current - 1 ? '24px' : '8px',
+            height: '8px',
+            borderRadius: '999px',
+            background: i <= current - 1 ? '#6366f1' : '#e5e5e5',
+            transition: 'all 0.3s ease'
+          }}
+        />
+      ))}
+    </div>
+  )
+}
 
 function App() {
   const [step, setStep] = useState(1)
@@ -16,7 +50,9 @@ function App() {
   const handleNext = () => {
     setStep(step + 1)
   }
-
+  const handleBack = () => {
+  setStep(step - 1)
+}
   const handleChange = (field, value) =>{
     setProfile({...profile,[field]:value})
   }
@@ -74,9 +110,11 @@ const handleSendMessage = async () => {
 }
 
 
-  if(step==1){
+if(step==1){
     return(
-      <div style={styles.container}>
+      <div style={styles.container} className="fade-in" key={step}>
+       <style>{fadeStyle}</style>
+       <ProgressDots current={1} total={4} />
        <h2 style={styles.question}>Bạn nói ngôn ngữ nào?</h2>
         <input
           style={styles.input}
@@ -94,7 +132,9 @@ const handleSendMessage = async () => {
 
   if(step == 2){
     return(
-       <div style={styles.container}>
+       <div style={styles.container} className="fade-in" key={step}>
+        <style>{fadeStyle}</style>
+        <ProgressDots current={2} total={4} />
         <h2 style={styles.question}>Bạn muốn học ngôn ngữ nào?</h2>
         <input
           style={styles.input}
@@ -103,16 +143,21 @@ const handleSendMessage = async () => {
           value={profile.targetLanguage}
           onChange={(e) => handleChange('targetLanguage', e.target.value)}
         />
-        <button style={styles.button} onClick={handleNext} disabled={!profile.targetLanguage}>
-          Tiếp theo
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button style={styles.backButton} onClick={handleBack}>← Quay lại</button>
+          <button style={styles.button} onClick={handleNext} disabled={!profile.targetLanguage}>
+            Tiếp theo
+          </button>
+        </div>
       </div>
     )
   }
 
-  if (step == 3){
+if (step == 3){
      return (
-      <div style={styles.container}>
+      <div style={styles.container} className="fade-in" key={step}>
+        <style>{fadeStyle}</style>
+        <ProgressDots current={3} total={4} />
         <h2 style={styles.question}>Mục tiêu học của bạn là gì?</h2>
         <select
           style={styles.input}
@@ -125,16 +170,21 @@ const handleSendMessage = async () => {
           <option value="exam">Thi cử (IELTS/TOEFL...)</option>
           <option value="general">Giao tiếp chung</option>
         </select>
-        <button style={styles.button} onClick={handleNext} disabled={!profile.goal}>
-          Hoàn tất
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button style={styles.backButton} onClick={handleBack}>← Quay lại</button>
+          <button style={styles.button} onClick={handleNext} disabled={!profile.goal}>
+            Hoàn tất
+          </button>
+        </div>
       </div>
     )
   }
 
 if (step === 4) {
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="fade-in" key={step}>
+      <style>{fadeStyle}</style>
+      <ProgressDots current={4} total={4} />
       <h2 style={styles.question}>Đánh giá trình độ</h2>
       <p>Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.</p>
       <textarea
@@ -144,13 +194,16 @@ if (step === 4) {
         onChange={(e) => handleChange('placementAnswer', e.target.value)}
         disabled={isLoading}
       />
-      <button
-        style={styles.button}
-        onClick={handleSubmitPlacement}
-        disabled={!profile.placementAnswer || isLoading}
-      >
-        {isLoading ? 'Đang chấm điểm...' : 'Nộp bài'}
-      </button>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button style={styles.backButton} onClick={handleBack} disabled={isLoading}>← Quay lại</button>
+        <button
+          style={styles.button}
+          onClick={handleSubmitPlacement}
+          disabled={!profile.placementAnswer || isLoading}
+        >
+          {isLoading ? 'Đang chấm điểm...' : 'Nộp bài'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -293,6 +346,17 @@ chatBubble: {
   maxWidth: '75%',
   fontSize: '15px',
   textAlign: 'left'
+},
+
+backButton: {
+  padding: '14px 24px',
+  fontSize: '15px',
+  fontWeight: '600',
+  borderRadius: '999px',
+  border: '1.5px solid transparent',
+  background: 'transparent',
+  color: '#666666',
+  cursor: 'pointer'
 },
 }
 
