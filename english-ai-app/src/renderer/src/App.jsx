@@ -7,6 +7,7 @@ function App() {
     targetLanguage:'',
     goal:''
   })
+  const [profileId, setProfileId] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
   const [placementResult, setPlacementResult] = useState(null)
   const [chatHistory, setChatHistory] = useState([])
@@ -28,15 +29,16 @@ function App() {
     })
     setPlacementResult(result)
 
-    await window.api.saveProfile({
-      nativeLanguage: profile.nativeLanguage,
-      targetLanguage: profile.targetLanguage,
-      goal: profile.goal,
-      cefrLevel: result.level,
-      feedback: result.feedback
+   const saveResult = await window.api.saveProfile({
+  nativeLanguage: profile.nativeLanguage,
+  targetLanguage: profile.targetLanguage,
+  goal: profile.goal,
+  cefrLevel: result.level,
+  feedback: result.feedback
+})
+setProfileId(saveResult.id)
+handleNext()
 
-    })
-    handleNext()
   } catch (error) {
     console.error('Error:', error)
   } finally {
@@ -55,11 +57,12 @@ const handleSendMessage = async () => {
 
   try {
     const result = await window.api.sendChatMessage({
+      profileId: profile.id,
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
       goal: profile.goal,
-      history: chatHistory,
+      history: chatHistory.slice(-6), // Send last 6 messages for context
       message: userMessage.text
     })
     setChatHistory([...newHistory, { role: 'model', text: result.reply }])
