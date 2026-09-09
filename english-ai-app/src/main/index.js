@@ -155,7 +155,7 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
           VALUES (?, ?, ?, ?, ?)
         `)
         for (const m of parsed.mistakes) {
-          stmt.run(event.sender.profileId || profileId, m.category, m.original, m.corrected, m.explanation)
+         stmt.run(profileId, m.category, m.original, m.corrected, m.explanation)
         }
       }
 
@@ -166,6 +166,18 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
     }
   })
 
+    ipcMain.handle('get-mistakes', async (event, { profileId }) => {
+    try {
+      const stmt = db.prepare(`
+        SELECT * FROM mistakes WHERE profile_id = ? ORDER BY created_at DESC
+      `)
+      const rows = stmt.all(profileId)
+      return { success: true, mistakes: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, mistakes: [] }
+    }
+  })
 
   createWindow()
 

@@ -5,7 +5,8 @@ import { electronAPI } from '@electron-toolkit/preload'
 const api = {
   assessPlacement: (data) => ipcRenderer.invoke('assess-placement', data),
   saveProfile: (data) => ipcRenderer.invoke('save-profile', data),
-  sendChatMessage: (data) => ipcRenderer.invoke('send-chat-message', data)
+  sendChatMessage: (data) => ipcRenderer.invoke('send-chat-message', data),
+  getMistakes: (data) => ipcRenderer.invoke('get-mistakes', data)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

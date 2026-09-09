@@ -47,6 +47,10 @@ function App() {
   const [chatHistory, setChatHistory] = useState([])
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const [mistakes, setMistakes] = useState([])
+  const [showReview, setShowReview] = useState(false)
+
+  
   const handleNext = () => {
     setStep(step + 1)
   }
@@ -72,6 +76,7 @@ function App() {
   cefrLevel: result.level,
   feedback: result.feedback
 })
+
 setProfileId(saveResult.id)
 handleNext()
 
@@ -81,7 +86,11 @@ handleNext()
     setIsLoading(false)
   }
 }
-
+  const handleOpenReview = async () => {
+  const result = await window.api.getMistakes({ profileId })
+  setMistakes(result.mistakes || [])
+  setShowReview(true)
+}
 const handleSendMessage = async () => {
   if (!chatInput.trim()) return
 
@@ -93,7 +102,7 @@ const handleSendMessage = async () => {
 
   try {
     const result = await window.api.sendChatMessage({
-      profileId: profile.id,
+      profileId: profileId,
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
@@ -101,7 +110,7 @@ const handleSendMessage = async () => {
       history: chatHistory.slice(-6), // Send last 6 messages for context
       message: userMessage.text
     })
-    setChatHistory([...newHistory, { role: 'model', text: result.reply }])
+    setChatHistory([...newHistory, { role: 'model', text: result.reply, mistakes: result.mistakes || [] }])
   } catch (error) {
     console.error('Error:', error)
   } finally {
@@ -208,12 +217,49 @@ if (step === 4) {
   )
 }
 
+if (showReview) {
+  return (
+    <div style={{ ...styles.container, justifyContent: 'flex-start', paddingTop: '30px' }} className="fade-in" key="review">
+      <style>{fadeStyle}</style>
+      <h2 style={styles.question}>Sổ tay lỗi sai</h2>
+      <p style={{ fontSize: '14px', color: '#666' }}>
+        {mistakes.length} lỗi đã ghi nhận
+      </p>
+
+      <div style={styles.reviewBox}>
+        {mistakes.length === 0 && (
+          <p style={{ color: '#999' }}>Chưa có lỗi nào được ghi nhận. Hãy trò chuyện nhiều hơn!</p>
+        )}
+        {mistakes.map((m) => (
+          <div key={m.id} style={styles.mistakeCard}>
+            <div style={styles.mistakeCategory}>{m.category}</div>
+            <div style={{ margin: '6px 0' }}>
+              <span style={{ color: '#c0392b', textDecoration: 'line-through' }}>{m.original_text}</span>
+              {' → '}
+              <span style={{ color: '#27ae60', fontWeight: '600' }}>{m.corrected_text}</span>
+            </div>
+            <div style={{ fontSize: '13px', color: '#555' }}>{m.explanation}</div>
+          </div>
+        ))}
+      </div>
+
+      <button style={styles.button} onClick={() => setShowReview(false)}>
+        Quay lại luyện tập
+      </button>
+    </div>
+  )
+}
+
 return (
-  <div style={{ ...styles.container, justifyContent: 'flex-start', paddingTop: '30px' }}>
+   <div style={{ ...styles.container, justifyContent: 'flex-start', paddingTop: '30px' }} className="fade-in" key={step}>
+    <style>{fadeStyle}</style>
     <h2 style={styles.question}>Luyện tập cùng AI</h2>
     <p style={{ fontSize: '14px', color: '#666' }}>
       Trình độ: {placementResult?.level} | Mục tiêu: {profile.goal}
     </p>
+    <button style={styles.reviewLink} onClick={handleOpenReview}>
+    📋 Xem sổ tay lỗi sai
+    </button>
 
     <div style={styles.chatBox}>
   {chatHistory.map((msg, i) => (
@@ -357,6 +403,38 @@ backButton: {
   background: 'transparent',
   color: '#666666',
   cursor: 'pointer'
+},
+
+reviewBox: {
+  width: '500px',
+  maxHeight: '400px',
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px'
+},
+mistakeCard: {
+  padding: '14px 18px',
+  borderRadius: '14px',
+  border: '1.5px solid #eee',
+  background: '#fafafa',
+  textAlign: 'left'
+},
+mistakeCategory: {
+  fontSize: '12px',
+  fontWeight: '700',
+  textTransform: 'uppercase',
+  color: '#6366f1',
+  letterSpacing: '0.5px'
+},
+reviewLink: {
+  background: 'none',
+  border: 'none',
+  color: '#6366f1',
+  fontSize: '14px',
+  cursor: 'pointer',
+  textDecoration: 'underline',
+  padding: 0
 },
 }
 
