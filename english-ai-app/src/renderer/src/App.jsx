@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState ,useEffect } from "react";
 const fadeStyle = `
   .fade-in {
     transform: translate3d(40px, 0, 0);
@@ -35,7 +35,7 @@ function ProgressDots({ current, total }) {
 }
 
 function App() {
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
     nativeLanguage:'',
     targetLanguage:'',
@@ -49,8 +49,37 @@ function App() {
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [mistakes, setMistakes] = useState([])
   const [showReview, setShowReview] = useState(false)
-
+  const [username, setUsername] = useState('')
+  const [existingProfiles, setExistingProfiles] = useState([])
   
+
+  useEffect(() => {
+  window.api.getProfiles().then((res) => {
+    setExistingProfiles(res.profiles || [])
+  })
+}, [])
+  
+  const handleStartNewAccount = () => {
+  if (!username.trim()) return
+  setStep(1)
+}
+
+  const handleLoginExisting = async (p) => {
+  setProfileId(p.id)
+  setProfile({
+    nativeLanguage: p.native_language,
+    targetLanguage: p.target_language,
+    goal: p.goal
+  })
+  setPlacementResult({ level: p.cefr_level, feedback: '' })
+
+  const historyRes = await window.api.getChatHistory({ profileId: p.id })
+  const loadedHistory = (historyRes.messages || []).map(m => ({ role: m.role, text: m.text }))
+  setChatHistory(loadedHistory)
+
+  setStep(5) // vào thẳng màn hình chat
+}
+
   const handleNext = () => {
     setStep(step + 1)
   }
@@ -70,6 +99,7 @@ function App() {
     setPlacementResult(result)
 
    const saveResult = await window.api.saveProfile({
+  username: username,
   nativeLanguage: profile.nativeLanguage,
   targetLanguage: profile.targetLanguage,
   goal: profile.goal,
@@ -117,7 +147,37 @@ const handleSendMessage = async () => {
     setIsChatLoading(false)
   }
 }
+if (step === 0) {
+  return (
+    <div style={styles.container} className="fade-in" key="login">
+      <style>{fadeStyle}</style>
+      <h2 style={styles.question}>Chào mừng trở lại!</h2>
 
+      {existingProfiles.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '300px' }}>
+          {existingProfiles.map((p) => (
+            <button key={p.id} style={styles.button} onClick={() => handleLoginExisting(p)}>
+              {p.username} ({p.cefr_level})
+            </button>
+          ))}
+        </div>
+      )}
+
+      <p style={{ fontSize: '14px', color: '#666' }}>— hoặc —</p>
+
+      <input
+        style={styles.input}
+        type="text"
+        placeholder="Nhập tên để tạo tài khoản mới"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+      />
+      <button style={styles.button} onClick={handleStartNewAccount} disabled={!username.trim()}>
+        Tạo tài khoản mới
+      </button>
+    </div>
+  )
+}
 
 if(step==1){
     return(

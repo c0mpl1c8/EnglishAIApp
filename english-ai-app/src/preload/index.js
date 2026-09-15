@@ -6,7 +6,9 @@ const api = {
   assessPlacement: (data) => ipcRenderer.invoke('assess-placement', data),
   saveProfile: (data) => ipcRenderer.invoke('save-profile', data),
   sendChatMessage: (data) => ipcRenderer.invoke('send-chat-message', data),
-  getMistakes: (data) => ipcRenderer.invoke('get-mistakes', data)
+  getMistakes: (data) => ipcRenderer.invoke('get-mistakes', data),
+  getProfiles: () => ipcRenderer.invoke('get-profiles'),
+  getChatHistory: (data) => ipcRenderer.invoke('get-chat-history', data)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

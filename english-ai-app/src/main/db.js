@@ -16,6 +16,14 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+
+
+try {
+  db.exec(`ALTER TABLE profile ADD COLUMN username TEXT`)
+} catch (e) {
+  // cột đã tồn tại rồi, bỏ qua lỗi này
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS mistakes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,4 +35,15 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    role TEXT,
+    text TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
 export default db

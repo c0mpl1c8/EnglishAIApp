@@ -90,10 +90,11 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
     ipcMain.handle('save-profile', async (event, profileData) => {
     try {
       const stmt = db.prepare(`
-        INSERT INTO profile (native_language, target_language, goal, cefr_level, feedback)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO profile (username, native_language, target_language, goal, cefr_level, feedback)
+        VALUES (?, ?, ?, ?, ?,?)
       `)
       const result = stmt.run(
+        profileData.username,
         profileData.nativeLanguage,
         profileData.targetLanguage,
         profileData.goal,
@@ -159,6 +160,13 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
         }
       }
 
+            // Lưu cả 2 tin nhắn vào lịch sử chat
+      const saveMsgStmt = db.prepare(`
+        INSERT INTO chat_messages (profile_id, role, text) VALUES (?, ?, ?)
+      `)
+      saveMsgStmt.run(profileId, 'user', message)
+      saveMsgStmt.run(profileId, 'model', parsed.reply)
+
       return { success: true, reply: parsed.reply, mistakes: parsed.mistakes || [] }
     } catch (error) {
       console.error('Chat error:', error)
@@ -176,6 +184,47 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
     } catch (error) {
       console.error('DB error:', error)
       return { success: false, mistakes: [] }
+    }
+  })
+  
+  ipcMain.handle('get-profiles', async () => {
+    try {
+      const stmt = db.prepare(`
+        SELECT id, username, native_language, target_language, goal, cefr_level
+        FROM profile
+        WHERE id IN (SELECT MAX(id) FROM profile WHERE username IS NOT NULL GROUP BY username)
+        ORDER BY id DESC
+      `)
+      return { success: true, profiles: stmt.all() }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, profiles: [] }
+    }
+  })
+
+  ipcMain.handle('get-chat-history', async (event, { profileId }) => {
+    try {
+      const stmt = db.prepare(`
+        SELECT * FROM chat_messages WHERE profile_id = ? ORDER BY created_at ASC
+      `)
+      return { success: true, messages: stmt.all(profileId) }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, messages: [] }
+    }
+  })
+
+  ipcMain.handle('save-chat-message', async (event, { profileId, role, text }) => {
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO chat_messages (profile_id, role, text)
+        VALUES (?, ?, ?)
+      `)
+      stmt.run(profileId, role, text)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
     }
   })
 
