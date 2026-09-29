@@ -8,7 +8,10 @@ const api = {
   sendChatMessage: (data) => ipcRenderer.invoke('send-chat-message', data),
   getMistakes: (data) => ipcRenderer.invoke('get-mistakes', data),
   getProfiles: () => ipcRenderer.invoke('get-profiles'),
-  getChatHistory: (data) => ipcRenderer.invoke('get-chat-history', data)
+  getChatHistory: (data) => ipcRenderer.invoke('get-chat-history', data),
+  getDueMistakes: (data) => ipcRenderer.invoke('get-due-mistakes', data),
+  generateReviewQuestion: (data) => ipcRenderer.invoke('generate-review-question', data),
+  recordReviewResult: (data) => ipcRenderer.invoke('record-review-result', data)
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

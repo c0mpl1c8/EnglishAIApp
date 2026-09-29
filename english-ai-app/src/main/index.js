@@ -22,6 +22,17 @@ async function generateWithRetry(params, maxRetries = 2) {
   }
 }
 
+const REVIEW_LADDER = [0, 3, 7, 14]
+
+
+function normalizeAnswer(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function createWindow() {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -224,6 +235,98 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
       return { success: true }
     } catch (error) {
       console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
+  // ===== Spaced repetition =====
+
+  ipcMain.handle('get-due-mistakes', async (event, { profileId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT * FROM mistakes
+        WHERE profile_id = ?
+          AND (next_review_at IS NULL OR next_review_at <= date('now','localtime'))
+        ORDER BY COALESCE(next_review_at, '0000-00-00') ASC, created_at ASC
+      `).all(profileId)
+      return { success: true, mistakes: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, mistakes: [] }
+    }
+  })
+
+  ipcMain.handle('generate-review-question', async (event, { mistake, targetLanguage, nativeLanguage }) => {
+    try {
+      const response = await generateWithRetry({
+        model: 'gemini-3.6-flash',
+        contents: `Bạn là gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}.
+Học viên từng mắc lỗi sau:
+- Loại lỗi: ${mistake.category}
+- Câu sai: "${mistake.original_text}"
+- Sửa đúng: "${mistake.corrected_text}"
+- Giải thích: ${mistake.explanation}
+
+Hãy tạo MỘT bài tập ôn lại đúng quy tắc này: viết một câu MỚI bằng ${targetLanguage} (khác câu gốc, độ dài ngắn, đời thường) có chứa cùng kiểu lỗi đó. Học viên sẽ phải viết lại cả câu cho đúng. Câu phải chỉ có một cách sửa rõ ràng.
+Trả lời CHỈ bằng JSON: {"instruction": "yêu cầu ngắn bằng tiếng Việt", "sentence": "câu có lỗi", "answer": "câu đã sửa đúng hoàn chỉnh"}`
+      })
+
+      const text = response.text.replace(/```json|```/g, '').trim()
+      const parsed = JSON.parse(text)
+      if (!parsed.sentence || !parsed.answer) throw new Error('Thiếu trường trong JSON')
+
+      return {
+        success: true,
+        question: {
+          instruction: parsed.instruction || 'Sửa lỗi sai trong câu sau và viết lại cả câu:',
+          sentence: parsed.sentence,
+          answer: parsed.answer
+        }
+      }
+    } catch (error) {
+      console.error('Review question error:', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('record-review-result', async (event, { mistakeId, sentence, expectedAnswer, userAnswer, targetLanguage }) => {
+    try {
+      // 1) Chấm: khớp đáp án thì đúng luôn, không tốn quota; khác thì nhờ AI xét
+      let correct = normalizeAnswer(userAnswer) === normalizeAnswer(expectedAnswer)
+      let feedback = ''
+
+      if (!correct) {
+        const response = await generateWithRetry({
+          model: 'gemini-3.6-flash',
+          contents: `Học viên đang học ${targetLanguage}. Bài tập: sửa câu sau cho đúng: "${sentence}"
+Đáp án mẫu: "${expectedAnswer}"
+Câu trả lời của học viên: "${userAnswer}"
+Hãy xác định câu trả lời của học viên có đúng không. Chấp nhận nếu câu đã hết lỗi ngữ pháp và giữ nguyên ý nghĩa, dù khác đáp án mẫu. Không chấp nhận nếu vẫn còn lỗi ban đầu.
+Trả lời CHỈ bằng JSON: {"correct": true hoặc false, "feedback": "nhận xét ngắn bằng tiếng Việt"}`
+        })
+        const text = response.text.replace(/```json|```/g, '').trim()
+        const judged = JSON.parse(text)
+        correct = judged.correct === true
+        feedback = judged.feedback || ''
+      }
+
+      // 2) Cập nhật lịch ôn
+      const row = db.prepare(`SELECT interval_days FROM mistakes WHERE id = ?`).get(mistakeId)
+      const current = row?.interval_days ?? 0
+      const nextInterval = correct
+        ? (REVIEW_LADDER.find((d) => d > current) ?? REVIEW_LADDER[REVIEW_LADDER.length - 1])
+        : 0
+
+      db.prepare(`
+        UPDATE mistakes
+        SET interval_days = ?, next_review_at = date('now','localtime', ?)
+        WHERE id = ?
+      `).run(nextInterval, `+${nextInterval} days`, mistakeId)
+
+      return { success: true, correct, feedback, expectedAnswer, nextInterval }
+    } catch (error) {
+      // Lỗi khi chấm (vd. hết quota): KHÔNG đụng vào lịch ôn để khỏi phạt oan
+      console.error('Record review error:', error)
       return { success: false }
     }
   })

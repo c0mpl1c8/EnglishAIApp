@@ -81,7 +81,10 @@ const iconPaths = {
   monitor: ['M4 3h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z', 'M8 21h8', 'M12 17v4'],
   close: ['M18 6 6 18', 'm6 6 12 12'],
   warning: ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3', 'M12 9v4', 'M12 17h.01'],
-  back: ['m12 19-7-7 7-7', 'M19 12H5']
+  back: ['m12 19-7-7 7-7', 'M19 12H5'],
+  repeat: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
+  check: ['M20 6 9 17l-5-5'],
+  send: ['m5 12 7-7 7 7', 'M12 19V5']
 }
 
 function Icon({ name, size = 18 }) {
@@ -137,6 +140,12 @@ const goalLabels = {
 
 const chatSuggestions = ['Hello, my name is...', 'Can you help me practice ordering food?', 'Let\'s talk about my day']
 
+const SESSION_SIZE = 10
+
+const todayLocal = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 
 function ProgressDots({ current, total }) {
@@ -158,6 +167,197 @@ function ProgressDots({ current, total }) {
   )
 }
 
+
+function PracticeScreen({ profileId, profile, onExit }) {
+  const [queue, setQueue] = useState([])
+  const [index, setIndex] = useState(0)
+  // loadingList | loadingQuestion | answering | checking | feedback | error | empty | done
+  const [phase, setPhase] = useState('loadingList')
+  const [question, setQuestion] = useState(null)
+  const [answer, setAnswer] = useState('')
+  const [result, setResult] = useState(null)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [notice, setNotice] = useState('')
+
+  const loadQuestion = async (mistake) => {
+    setPhase('loadingQuestion')
+    setAnswer('')
+    setResult(null)
+    setNotice('')
+    const res = await window.api.generateReviewQuestion({
+      mistake,
+      targetLanguage: profile.targetLanguage,
+      nativeLanguage: profile.nativeLanguage
+    })
+    if (res.success) {
+      setQuestion(res.question)
+      setPhase('answering')
+    } else {
+      setPhase('error')
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.getDueMistakes({ profileId }).then((res) => {
+      if (cancelled) return
+      const list = (res.mistakes || []).slice(0, SESSION_SIZE)
+      if (list.length === 0) {
+        setPhase('empty')
+        return
+      }
+      setQueue(list)
+      loadQuestion(list[0])
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const handleSubmit = async () => {
+    if (!answer.trim() || phase !== 'answering') return
+    setPhase('checking')
+    setNotice('')
+    const res = await window.api.recordReviewResult({
+      mistakeId: queue[index].id,
+      sentence: question.sentence,
+      expectedAnswer: question.answer,
+      userAnswer: answer,
+      targetLanguage: profile.targetLanguage
+    })
+    if (!res.success) {
+      setNotice('Không chấm được lúc này (có thể AI đang quá tải). Bạn thử nộp lại nhé.')
+      setPhase('answering')
+      return
+    }
+    if (res.correct) setCorrectCount((c) => c + 1)
+    setResult(res)
+    setPhase('feedback')
+  }
+
+  const handleNext = () => {
+    if (index + 1 >= queue.length) {
+      setPhase('done')
+      return
+    }
+    setIndex(index + 1)
+    loadQuestion(queue[index + 1])
+  }
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loadingList') return wrap(<p>Đang tải danh sách ôn tập...</p>)
+
+  if (phase === 'empty') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Không có lỗi nào cần ôn</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px' }}>
+          Hôm nay bạn đã ôn hết rồi. Hãy quay lại vào ngày mai, hoặc trò chuyện thêm để AI ghi nhận thêm lỗi nhé.
+        </p>
+        <button style={styles.button} onClick={onExit}>Quay lại luyện tập</button>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Hoàn thành phiên ôn tập</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>
+          {correctCount}/{queue.length}
+        </div>
+        <p style={{ color: 'var(--text-muted)' }}>câu trả lời đúng</p>
+        <button style={styles.button} onClick={onExit}>Quay lại luyện tập</button>
+      </>
+    )
+  }
+
+  const current = queue[index]
+  const nextText = result
+    ? result.nextInterval === 0
+      ? 'Lỗi này sẽ quay lại trong lần ôn tập tới.'
+      : `Bạn sẽ gặp lại lỗi này sau ${result.nextInterval} ngày.`
+    : ''
+
+  return wrap(
+    <>
+      <ProgressDots current={index + 1} total={queue.length} />
+      <h2 style={styles.question}>Ôn tập lỗi cũ</h2>
+
+      <div style={practiceStyles.card}>
+        <div style={styles.mistakeCategory}>{current.category}</div>
+        {phase === 'loadingQuestion' && <p style={{ margin: '12px 0 0' }}>Đang tạo câu hỏi...</p>}
+        {phase === 'error' && (
+          <p style={{ margin: '12px 0 0' }}>Không tạo được câu hỏi (có thể AI đang quá tải).</p>
+        )}
+        {question && phase !== 'loadingQuestion' && phase !== 'error' && (
+          <>
+            <p style={{ margin: '10px 0', fontSize: fs(14), color: 'var(--text-soft)' }}>{question.instruction}</p>
+            <div style={practiceStyles.sentence}>{question.sentence}</div>
+          </>
+        )}
+      </div>
+
+      {(phase === 'answering' || phase === 'checking' || phase === 'feedback') && (
+        <input
+          style={{ ...styles.input, width: '100%', maxWidth: '520px' }}
+          value={answer}
+          onChange={(e) => setAnswer(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+          placeholder="Viết lại câu đã sửa..."
+          disabled={phase !== 'answering'}
+          autoFocus
+        />
+      )}
+
+      {notice && <p style={{ margin: 0, color: '#c0392b', fontSize: fs(14) }}>{notice}</p>}
+
+      {phase === 'feedback' && result && (
+        <div style={{ ...practiceStyles.feedback, ...(result.correct ? practiceStyles.ok : practiceStyles.bad) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '700' }}>
+            <Icon name={result.correct ? 'check' : 'close'} size={16} />
+            {result.correct ? 'Chính xác!' : 'Chưa đúng'}
+          </div>
+          {!result.correct && (
+            <div style={{ marginTop: '6px' }}>Đáp án: <strong>{result.expectedAnswer}</strong></div>
+          )}
+          {result.feedback && <div style={{ marginTop: '6px', fontSize: fs(13) }}>{result.feedback}</div>}
+          <div style={{ marginTop: '6px', fontSize: fs(13), color: 'var(--text-muted)' }}>{nextText}</div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+
+        {(phase === 'answering' || phase === 'checking') && (
+          <button style={styles.button} onClick={handleSubmit} disabled={!answer.trim() || phase === 'checking'}>
+            {phase === 'checking' ? 'Đang chấm...' : 'Kiểm tra'}
+          </button>
+        )}
+        {phase === 'feedback' && (
+          <button style={styles.button} onClick={handleNext}>
+            {index + 1 >= queue.length ? 'Xem kết quả' : 'Câu tiếp theo'}
+          </button>
+        )}
+        {phase === 'error' && (
+          <>
+            <button style={styles.button} onClick={() => loadQuestion(current)}>Thử lại</button>
+            <button style={styles.backButton} onClick={handleNext}>Bỏ qua</button>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
 function AppContent({ settings }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
@@ -173,6 +373,7 @@ function AppContent({ settings }) {
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [mistakes, setMistakes] = useState([])
   const [showReview, setShowReview] = useState(false)
+  const [showPractice, setShowPractice] = useState(false)
   const [username, setUsername] = useState('')
   const [existingProfiles, setExistingProfiles] = useState([])
   
@@ -291,6 +492,7 @@ const handleLogout = () => {
   setMistakes([])
   setUsername('')
   setShowReview(false)
+  setShowPractice(false)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -301,6 +503,10 @@ const categoryCounts = Object.entries(
 )
   .sort((a, b) => b[1] - a[1])
   .slice(0, 3)
+
+
+const dueCount = mistakes.filter((m) => !m.next_review_at || m.next_review_at <= todayLocal()).length
+
 if (step === 0) {
   return (
     <div style={styles.container} className="fade-in" key="login">
@@ -468,6 +674,18 @@ if (showReview) {
   )
 }
 
+if (showPractice) {
+  return (
+    <PracticeScreen
+      profileId={profileId}
+      profile={profile}
+      onExit={() => {
+        setShowPractice(false)
+        refreshMistakes()
+      }}
+    />
+  )
+}
 return (
   <div style={styles.appLayout} className="fade-in" key={step}>
     <style>{fadeStyle}</style>
@@ -484,6 +702,10 @@ return (
       <div style={{ flex: 1 }} />
       <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleOpenReview}>
   <Icon name="book" /> Sổ tay lỗi sai
+</button>
+<button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={() => setShowPractice(true)}>
+  <Icon name="repeat" /> <span style={{ flex: 1 }}>Ôn tập</span>
+  {dueCount > 0 && <span style={styles.dueBadge}>{dueCount}</span>}
 </button>
 <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleLogout}>
   <Icon name="logout" /> Đăng xuất
@@ -554,10 +776,19 @@ return (
           placeholder="Nhập tin nhắn..."
           disabled={isChatLoading}
         />
-        <button style={styles.button} onClick={handleSendMessage} disabled={isChatLoading}>
-          Gửi
-        </button>
-      </div>
+         <button
+    style={{
+      ...styles.sendButton,
+      ...(isChatLoading || !chatInput.trim() ? { opacity: 0.4, cursor: 'not-allowed' } : {})
+    }}
+    onClick={handleSendMessage}
+    disabled={isChatLoading || !chatInput.trim()}
+    title="Gửi"
+    aria-label="Gửi"
+  >
+    <Icon name="send" size={20} />
+  </button>
+</div>
     </main>
 
     {/* Panel thống kê phải */}
@@ -840,7 +1071,66 @@ const styles = {
     border: '1px solid var(--warn-border)',
     color: 'var(--warn-text)',
     textAlign: 'left'
+  },
+  
+  dueBadge: {
+    minWidth: '22px',
+    height: '22px',
+    padding: '0 7px',
+    borderRadius: '999px',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    fontSize: '12px',
+    fontWeight: '700',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxSizing: 'border-box'
+  },
+    sendButton: {
+    width: '48px',
+    height: '48px',
+    flexShrink: 0,
+    borderRadius: '50%',
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'opacity 0.2s ease'
   }
+}
+
+const practiceStyles = {
+  card: {
+    width: '100%',
+    maxWidth: '520px',
+    padding: '16px 20px',
+    borderRadius: '16px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface)',
+    boxShadow: 'var(--shadow)',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  sentence: {
+    fontSize: fs(20),
+    fontWeight: '600',
+    color: 'var(--text-strong)',
+    lineHeight: 1.4
+  },
+  feedback: {
+    width: '100%',
+    maxWidth: '520px',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  ok: { background: 'rgba(39,174,96,0.12)', border: '1px solid rgba(39,174,96,0.5)' },
+  bad: { background: 'rgba(192,57,43,0.12)', border: '1px solid rgba(192,57,43,0.5)' }
 }
 
 const settingsStyles = {

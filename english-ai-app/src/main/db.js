@@ -17,11 +17,21 @@ db.exec(`
   )
 `)
 
+try {
+  db.exec(`ALTER TABLE mistakes ADD COLUMN next_review_at TEXT`)
+} catch (e) {
+
+}
+try {
+  db.exec(`ALTER TABLE mistakes ADD COLUMN interval_days INTEGER DEFAULT 0`)
+} catch (e) {
+  
+}
 
 try {
   db.exec(`ALTER TABLE profile ADD COLUMN username TEXT`)
 } catch (e) {
-  // cột đã tồn tại rồi, bỏ qua lỗi này
+  
 }
 
 db.exec(`
