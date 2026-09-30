@@ -18,21 +18,8 @@ db.exec(`
 `)
 
 try {
-  db.exec(`ALTER TABLE mistakes ADD COLUMN next_review_at TEXT`)
-} catch (e) {
-
-}
-try {
-  db.exec(`ALTER TABLE mistakes ADD COLUMN interval_days INTEGER DEFAULT 0`)
-} catch (e) {
-  
-}
-
-try {
   db.exec(`ALTER TABLE profile ADD COLUMN username TEXT`)
-} catch (e) {
-  
-}
+} catch (e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS mistakes (
@@ -46,6 +33,13 @@ db.exec(`
   )
 `)
 
+try {
+  db.exec(`ALTER TABLE mistakes ADD COLUMN next_review_at TEXT`)
+} catch (e) {}
+try {
+  db.exec(`ALTER TABLE mistakes ADD COLUMN interval_days INTEGER DEFAULT 0`)
+} catch (e) {}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +47,20 @@ db.exec(`
     role TEXT,
     text TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
+try {
+  db.exec(`ALTER TABLE chat_messages ADD COLUMN conversation_id INTEGER`)
+} catch (e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS conversations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    title TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
 

@@ -119,13 +119,20 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
     }
   })
 
-    ipcMain.handle('send-chat-message', async (event, {profileId, cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
+      ipcMain.handle('send-chat-message', async (event, {profileId, conversationId, cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
     try {
       const systemContext = `Bạn là một gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}, mục tiêu học: ${goal}.
 
 QUY TẮC NGÔN NGỮ:
 - Nếu trình độ A1/A2: trả lời song ngữ — câu bằng ${targetLanguage} trước, kèm bản dịch ngắn bằng ${nativeLanguage} trong ngoặc.
 - Nếu trình độ B1 trở lên: chủ yếu bằng ${targetLanguage}.
+
+QUY TẮC TRÌNH BÀY "reply" (bắt buộc, để dễ đọc):
+- Chia thành các đoạn ngắn, mỗi đoạn tối đa 1-2 câu, ngăn cách bằng ký tự xuống dòng. Trong JSON hãy viết đúng chuỗi \n, KHÔNG xuống dòng thật bên trong chuỗi.
+- Với A1/A2: mỗi câu bằng ${targetLanguage} nằm trên một dòng riêng, bản dịch ${nativeLanguage} trong ngoặc nằm ngay dòng bên dưới.
+- Ví dụ minh hoạ đặt trên dòng riêng, bắt đầu bằng "Example:".
+- Câu hỏi hoặc yêu cầu luyện tập cuối cùng đặt trên dòng riêng ở cuối.
+- Dùng **in đậm** cho từ hoặc cấu trúc quan trọng.
 
 QUY TẮC PHẢN HỒI (bắt buộc):
 Luôn trả lời CHỈ bằng JSON theo đúng format sau, không thêm chữ nào khác ngoài JSON:
@@ -160,6 +167,16 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
       const text = response.text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(text)
 
+      // Tạo đoạn chat mới nếu đây là tin nhắn đầu tiên
+      let convId = conversationId
+      if (!convId) {
+        const title = message.length > 40 ? message.slice(0, 40) + '…' : message
+        const created = db.prepare(`
+          INSERT INTO conversations (profile_id, title) VALUES (?, ?)
+        `).run(profileId, title)
+        convId = created.lastInsertRowid
+      }
+
       // Lưu các lỗi sai vào DB
       if (parsed.mistakes && parsed.mistakes.length > 0) {
         const stmt = db.prepare(`
@@ -171,14 +188,16 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
         }
       }
 
-            // Lưu cả 2 tin nhắn vào lịch sử chat
+      // Lưu cả 2 tin nhắn vào đúng đoạn chat
       const saveMsgStmt = db.prepare(`
-        INSERT INTO chat_messages (profile_id, role, text) VALUES (?, ?, ?)
+        INSERT INTO chat_messages (profile_id, conversation_id, role, text) VALUES (?, ?, ?, ?)
       `)
-      saveMsgStmt.run(profileId, 'user', message)
-      saveMsgStmt.run(profileId, 'model', parsed.reply)
+      saveMsgStmt.run(profileId, convId, 'user', message)
+      saveMsgStmt.run(profileId, convId, 'model', parsed.reply)
 
-      return { success: true, reply: parsed.reply, mistakes: parsed.mistakes || [] }
+      db.prepare(`UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(convId)
+
+      return { success: true, reply: parsed.reply, mistakes: parsed.mistakes || [], conversationId: convId }
     } catch (error) {
       console.error('Chat error:', error)
       return { success: false, reply: 'Có lỗi xảy ra, thử lại sau.', mistakes: [] }
@@ -239,6 +258,42 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
     }
   })
 
+    // ===== Đoạn chat (conversations) =====
+
+  ipcMain.handle('get-conversations', async (event, { profileId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT * FROM conversations WHERE profile_id = ? ORDER BY updated_at DESC
+      `).all(profileId)
+      return { success: true, conversations: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, conversations: [] }
+    }
+  })
+
+  ipcMain.handle('get-conversation-messages', async (event, { conversationId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at ASC
+      `).all(conversationId)
+      return { success: true, messages: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, messages: [] }
+    }
+  })
+
+  ipcMain.handle('delete-conversation', async (event, { conversationId }) => {
+    try {
+      db.prepare(`DELETE FROM chat_messages WHERE conversation_id = ?`).run(conversationId)
+      db.prepare(`DELETE FROM conversations WHERE id = ?`).run(conversationId)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
   // ===== Spaced repetition =====
 
   ipcMain.handle('get-due-mistakes', async (event, { profileId }) => {

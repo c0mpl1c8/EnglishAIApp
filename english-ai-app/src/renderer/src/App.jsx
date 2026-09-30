@@ -84,7 +84,10 @@ const iconPaths = {
   back: ['m12 19-7-7 7-7', 'M19 12H5'],
   repeat: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
   check: ['M20 6 9 17l-5-5'],
-  send: ['m5 12 7-7 7 7', 'M12 19V5']
+  send: ['m5 12 7-7 7 7', 'M12 19V5'],
+  send: ['m5 12 7-7 7 7', 'M12 19V5'],
+  plus: ['M12 5v14', 'M5 12h14'],
+  trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6']
 }
 
 function Icon({ name, size = 18 }) {
@@ -126,11 +129,73 @@ const fadeStyle = `
   }
 `;
 
+const typingStyle = `
+  @keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-5px); opacity: 1; }
+  }
+  .typing-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    display: inline-block;
+    animation: typingBounce 1.2s infinite ease-in-out;
+  }
+  .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+`
+
 const layoutCss = `
   @media (max-width: 1100px) { .right-panel { display: none !important; } }
   @media (max-width: 800px) { .sidebar { display: none !important; } }
 `
 
+const sidebarCss = `
+  .conv-item {
+    transition: background 120ms ease;
+  }
+  .conv-item:hover {
+    background: var(--surface-soft) !important;
+  }
+  .conv-item .conv-delete {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .conv-item:hover .conv-delete {
+    opacity: 0.6;
+  }
+  .conv-item .conv-delete:hover {
+    opacity: 1 !important;
+    color: #ef4444 !important;
+  }
+`
+const scrollbarStyle = `
+  * {
+    scrollbar-width: thin; /* Firefox / dự phòng */
+    scrollbar-color: var(--border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-button {
+    display: none; /* bỏ mũi tên trên/dưới */
+  }
+`
 const goalLabels = {
   travel: 'Du lịch',
   work: 'Công việc',
@@ -163,6 +228,29 @@ function ProgressDots({ current, total }) {
           }}
         />
       ))}
+    </div>
+  )
+}
+
+function TypingIndicator() {
+  return (
+    <div style={{ alignSelf: 'flex-start' }}>
+      <style>{typingStyle}</style>
+      <div
+        style={{
+          display: 'inline-flex',
+          gap: '5px',
+          alignItems: 'center',
+          padding: '14px 16px',
+          borderRadius: '16px',
+          background: 'var(--bubble-ai-bg)'
+        }}
+        aria-label="Đang trả lời"
+      >
+        <span className="typing-dot" />
+        <span className="typing-dot" />
+        <span className="typing-dot" />
+      </div>
     </div>
   )
 }
@@ -376,7 +464,8 @@ function AppContent({ settings }) {
   const [showPractice, setShowPractice] = useState(false)
   const [username, setUsername] = useState('')
   const [existingProfiles, setExistingProfiles] = useState([])
-  
+  const [conversations, setConversations] = useState([])
+  const [currentConversationId, setCurrentConversationId] = useState(null)
 
   useEffect(() => {
   window.api.getProfiles().then((res) => {
@@ -399,9 +488,13 @@ function AppContent({ settings }) {
   })
   setPlacementResult({ level: p.cefr_level, feedback: '' })
 
-  const historyRes = await window.api.getChatHistory({ profileId: p.id })
-  const loadedHistory = (historyRes.messages || []).map(m => ({ role: m.role, text: m.text }))
-  setChatHistory(loadedHistory)
+    const convs = await loadConversations(p.id)
+  if (convs.length > 0) {
+    await switchConversation(convs[0].id)
+  } else {
+    setCurrentConversationId(null)
+    setChatHistory([])
+  }
 
   setStep(5) // vào thẳng màn hình chat
 }
@@ -434,6 +527,10 @@ function AppContent({ settings }) {
 })
 
 setProfileId(saveResult.id)
+setProfileId(saveResult.id)
+setConversations([])
+setCurrentConversationId(null)
+handleNext()
 handleNext()
 
   } catch (error) {
@@ -456,6 +553,36 @@ const refreshMistakes = async () => {
 useEffect(() => {
   refreshMistakes()
 }, [profileId])
+
+const loadConversations = async (pid) => {
+  const res = await window.api.getConversations({ profileId: pid })
+  setConversations(res.conversations || [])
+  return res.conversations || []
+}
+
+const switchConversation = async (convId) => {
+  setCurrentConversationId(convId)
+  const res = await window.api.getConversationMessages({ conversationId: convId })
+  const loaded = (res.messages || []).map(m => ({ role: m.role, text: m.text }))
+  setChatHistory(loaded)
+}
+
+const handleNewConversation = () => {
+  setCurrentConversationId(null)
+  setChatHistory([])
+}
+
+const handleDeleteConversation = async (convId, e) => {
+  e.stopPropagation()
+  await window.api.deleteConversation({ conversationId: convId })
+  if (convId === currentConversationId) {
+    setCurrentConversationId(null)
+    setChatHistory([])
+  }
+  loadConversations(profileId)
+}
+
+
 const handleSendMessage = async () => {
   if (!chatInput.trim()) return
 
@@ -468,21 +595,27 @@ const handleSendMessage = async () => {
   try {
     const result = await window.api.sendChatMessage({
       profileId: profileId,
+      conversationId: currentConversationId,
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
       goal: profile.goal,
-      history: chatHistory.slice(-6), // Send last 6 messages for context
+      history: chatHistory.slice(-6),
       message: userMessage.text
     })
     setChatHistory([...newHistory, { role: 'model', text: result.reply, mistakes: result.mistakes || [] }])
-    refreshMistakes() 
+    if (result.conversationId && result.conversationId !== currentConversationId) {
+      setCurrentConversationId(result.conversationId)
+    }
+    loadConversations(profileId)
+    refreshMistakes()
   } catch (error) {
     console.error('Error:', error)
   } finally {
     setIsChatLoading(false)
   }
 }
+
 const handleLogout = () => {
   setStep(0)
   setProfileId(null)
@@ -493,6 +626,10 @@ const handleLogout = () => {
   setUsername('')
   setShowReview(false)
   setShowPractice(false)
+  setShowReview(false)
+  setShowPractice(false)
+  setConversations([])
+  setCurrentConversationId(null)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -690,6 +827,7 @@ return (
   <div style={styles.appLayout} className="fade-in" key={step}>
     <style>{fadeStyle}</style>
     <style>{layoutCss}</style>
+    <style>{sidebarCss}</style>
 
     {/* Sidebar trái */}
     <aside className="sidebar" style={styles.sidebar}>
@@ -699,13 +837,38 @@ return (
       <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>
         Mục tiêu: {goalLabels[profile.goal] || profile.goal}
       </div>
-      <div style={{ flex: 1 }} />
+            <div style={styles.convSection}>
+        <button style={styles.newChatButton} onClick={handleNewConversation}>
+          <Icon name="plus" size={16} /> Đoạn chat mới
+        </button>
+              {conversations.map((c) => (
+          <div
+            key={c.id}
+            className="conv-item"
+            style={{
+              ...styles.convItem,
+              ...(c.id === currentConversationId ? styles.convItemActive : {})
+            }}
+            onClick={() => switchConversation(c.id)}
+          >
+            <span style={styles.convTitle}>{c.title || 'Đoạn chat mới'}</span>
+            <button
+              className="conv-delete"
+              style={styles.convDelete}
+              onClick={(e) => handleDeleteConversation(c.id, e)}
+              title="Xoá đoạn chat"
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
       <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleOpenReview}>
   <Icon name="book" /> Sổ tay lỗi sai
 </button>
 <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={() => setShowPractice(true)}>
   <Icon name="repeat" /> <span style={{ flex: 1 }}>Ôn tập</span>
-  {dueCount > 0 && <span style={styles.dueBadge}>{dueCount}</span>}
+  {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
 </button>
 <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleLogout}>
   <Icon name="logout" /> Đăng xuất
@@ -764,7 +927,7 @@ return (
     )}
   </div>
 ))}
-        {isChatLoading && <div style={styles.chatBubble}>Đang trả lời...</div>}
+        {isChatLoading && <TypingIndicator />}
       </div>
 
       <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
@@ -830,16 +993,19 @@ return (
 function formatMessage(text) {
   const lines = text.split('\n')
   return lines.map((line, i) => {
-    const parts = line.split(/(\*\*.*?\*\*)/g)
+    if (!line.trim()) return <div key={i} style={{ height: '8px' }} />
+    const parts = line.split(/(\*\*.*?\*\*|\([^()]*\))/g)
     return (
-      <div key={i} style={{ marginBottom: line.trim() ? '6px' : '0' }}>
-        {parts.map((part, j) =>
-          part.startsWith('**') && part.endsWith('**') ? (
-            <strong key={j}>{part.slice(2, -2)}</strong>
-          ) : (
-            part
-          )
-        )}
+      <div key={i} style={{ marginBottom: '4px' }}>
+        {parts.map((part, j) => {
+          if (part.startsWith('**') && part.endsWith('**')) {
+            return <strong key={j}>{part.slice(2, -2)}</strong>
+          }
+          if (part.startsWith('(') && part.endsWith(')')) {
+            return <span key={j} style={{ opacity: 0.7, fontSize: '0.92em' }}>{part}</span>
+          }
+          return part
+        })}
       </div>
     )
   })
@@ -1034,20 +1200,22 @@ const styles = {
     boxShadow: 'var(--shadow)',
     boxSizing: 'border-box'
   },
-  rightPanel: {
+    rightPanel: {
     width: '300px',
     flexShrink: 0,
-    padding: '32px 20px',
+    padding: '28px 20px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    justifyContent: 'flex-start',
+    gap: '10px',
     background: 'var(--panel)',
     borderLeft: '1px solid var(--border-soft)',
     boxSizing: 'border-box',
     overflowY: 'auto'
   },
   statCard: {
-    padding: '14px 16px',
+    flexShrink: 0,
+    padding: '12px 16px',
     borderRadius: '14px',
     background: 'var(--surface)',
     border: '1.5px solid var(--border-soft)',
@@ -1073,12 +1241,12 @@ const styles = {
     textAlign: 'left'
   },
   
-  dueBadge: {
+    dueBadge: {
     minWidth: '22px',
     height: '22px',
     padding: '0 7px',
     borderRadius: '999px',
-    background: 'var(--accent)',
+    background: '#ef4444',
     color: '#ffffff',
     fontSize: '12px',
     fontWeight: '700',
@@ -1100,6 +1268,64 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'opacity 0.2s ease'
+  },
+    convSection: {
+    flex: 1,
+    width: '100%',
+    minHeight: 0,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    marginTop: '8px'
+  },
+  newChatButton: {
+    width: '100%',
+    padding: '10px 14px',
+    borderRadius: '12px',
+    border: '1.5px dashed var(--border)',
+    background: 'transparent',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    fontSize: fs(13),
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginBottom: '4px'
+  },
+  convItem: {
+    width: '100%',
+    padding: '9px 10px',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '6px',
+    boxSizing: 'border-box'
+  },
+  convItemActive: {
+    background: 'var(--accent-soft)'
+  },
+  convTitle: {
+    fontSize: fs(13),
+    color: 'var(--text)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    textAlign: 'left',
+    flex: 1
+  },
+  convDelete: {
+    flexShrink: 0,
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    padding: '2px',
+    display: 'flex',
+    opacity: 0.6
   }
 }
 
@@ -1320,6 +1546,7 @@ function App() {
 
   return (
     <>
+      <style>{scrollbarStyle}</style>
       <AppContent settings={settings} />
       <button style={{ ...settingsStyles.gear, display: 'flex', alignItems: 'center', justifyContent: 'center', }} onClick={() => setShowSettings(true)} title="Cài đặt">
         <Icon name="settings" size={20} />
