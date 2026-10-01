@@ -64,4 +64,19 @@ db.exec(`
   )
 `)
 
+try {
+  db.exec(`ALTER TABLE conversations ADD COLUMN topic TEXT`)
+} catch (e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS vocabulary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    word TEXT,
+    meaning TEXT,
+    example_sentence TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+
 export default db

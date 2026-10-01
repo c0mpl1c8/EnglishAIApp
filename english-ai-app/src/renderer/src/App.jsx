@@ -1,4 +1,4 @@
-import { useState ,useEffect,useLayoutEffect } from "react";
+import { useState ,useEffect,useLayoutEffect,useRef } from "react";
 
 const fs = (px) => `calc(${px}px * var(--fs))`
 
@@ -85,9 +85,14 @@ const iconPaths = {
   repeat: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
   check: ['M20 6 9 17l-5-5'],
   send: ['m5 12 7-7 7 7', 'M12 19V5'],
-  send: ['m5 12 7-7 7 7', 'M12 19V5'],
   plus: ['M12 5v14', 'M5 12h14'],
-  trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6']
+  trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
+  user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
+  edit: ['M12 20h9', 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z'],
+  mic: ['M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z', 'M19 10v1a7 7 0 0 1-14 0v-1', 'M12 18v4', 'M8 22h8'],
+  speaker: ['M11 5 6 9H2v6h4l5 4V5z', 'M19.07 4.93a10 10 0 0 1 0 14.14', 'M15.54 8.46a5 5 0 0 1 0 7.07'],
+  cards: ['M3 9h14v10H3z', 'M7 9V5a2 2 0 0 1 2-2h12v14h-2'],
+  flame: ['M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z']
 }
 
 function Icon({ name, size = 18 }) {
@@ -169,6 +174,10 @@ const sidebarCss = `
     opacity: 1 !important;
     color: #ef4444 !important;
   }
+  .nav-item { transition: background 120ms ease; }
+  .nav-item:hover { background: var(--surface-soft) !important; }
+  .profile-bar { transition: background 120ms ease; }
+  .profile-bar:hover { background: var(--surface-soft) !important; }
 `
 const scrollbarStyle = `
   * {
@@ -196,6 +205,12 @@ const scrollbarStyle = `
     display: none; /* bỏ mũi tên trên/dưới */
   }
 `
+
+const loginCss = `
+  .account-row { transition: background 120ms ease; }
+  .account-row:hover { background: var(--surface-soft); }
+`
+
 const goalLabels = {
   travel: 'Du lịch',
   work: 'Công việc',
@@ -204,6 +219,42 @@ const goalLabels = {
 }
 
 const chatSuggestions = ['Hello, my name is...', 'Can you help me practice ordering food?', 'Let\'s talk about my day']
+
+function toSpeechLang(name) {
+  const n = (name || '').toLowerCase()
+  if (n.includes('anh') || n.includes('english')) return 'en-US'
+  if (n.includes('việt') || n.includes('viet')) return 'vi-VN'
+  if (n.includes('pháp') || n.includes('french')) return 'fr-FR'
+  if (n.includes('nhật') || n.includes('japan')) return 'ja-JP'
+  if (n.includes('hàn') || n.includes('korea')) return 'ko-KR'
+  if (n.includes('trung') || n.includes('chinese')) return 'zh-CN'
+  if (n.includes('đức') || n.includes('german')) return 'de-DE'
+  if (n.includes('tây ban nha') || n.includes('spanish')) return 'es-ES'
+  return 'en-US'
+}
+
+function cleanForSpeech(text) {
+  return text.replace(/\*\*/g, '').replace(/\([^()]*\)/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function speakText(text, lang) {
+  if (!window.speechSynthesis) return
+  window.speechSynthesis.cancel()
+  const utter = new SpeechSynthesisUtterance(cleanForSpeech(text))
+  utter.lang = lang
+  window.speechSynthesis.speak(utter)
+}
+
+const topicOptions = [
+  { id: 'free', label: 'Tự do (không chủ đề)' },
+  { id: 'gọi món ăn ở nhà hàng', label: '🍽️ Gọi món ăn' },
+  { id: 'hỏi đường và đi du lịch', label: '🧭 Hỏi đường & du lịch' },
+  { id: 'phỏng vấn xin việc', label: '💼 Phỏng vấn xin việc' },
+  { id: 'trò chuyện xã giao hàng ngày', label: '💬 Giao tiếp hàng ngày' },
+  { id: 'mua sắm ở cửa hàng', label: '🛍️ Mua sắm' }
+]
+
+const DAILY_GOAL = 5
 
 const SESSION_SIZE = 10
 
@@ -254,6 +305,35 @@ function TypingIndicator() {
     </div>
   )
 }
+
+function useSpeechInput(lang, onResult) {
+  const [listening, setListening] = useState(false)
+  const recRef = useRef(null)
+  const supported = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
+
+  const start = () => {
+    if (!supported) return
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    const rec = new SR()
+    rec.lang = lang
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+    rec.onresult = (e) => onResult(e.results[0][0].transcript)
+    rec.onend = () => setListening(false)
+    rec.onerror = () => setListening(false)
+    recRef.current = rec
+    rec.start()
+    setListening(true)
+  }
+
+  const stop = () => {
+    recRef.current?.stop()
+    setListening(false)
+  }
+
+  return { supported, listening, start, stop }
+}
+
 
 
 function PracticeScreen({ profileId, profile, onExit }) {
@@ -446,6 +526,88 @@ function PracticeScreen({ profileId, profile, onExit }) {
   )
 }
 
+function VocabScreen({ profileId, onExit }) {
+  const [list, setList] = useState([])
+  const [index, setIndex] = useState(0)
+  const [flipped, setFlipped] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    window.api.getVocabulary({ profileId }).then((res) => {
+      setList(res.vocabulary || [])
+      setLoading(false)
+    })
+  }, [])
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      {children}
+    </div>
+  )
+
+  if (loading) return wrap(<p>Đang tải từ vựng...</p>)
+
+  if (list.length === 0) {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa có từ vựng nào</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px' }}>
+          Trò chuyện thêm với AI để tự động ghi lại những từ vựng hay gặp.
+        </p>
+        <button style={styles.button} onClick={onExit}>Quay lại</button>
+      </>
+    )
+  }
+
+  const card = list[index]
+  const next = () => {
+    setFlipped(false)
+    setIndex((i) => (i + 1) % list.length)
+  }
+  const prev = () => {
+    setFlipped(false)
+    setIndex((i) => (i - 1 + list.length) % list.length)
+  }
+
+  return wrap(
+    <>
+      <h2 style={styles.question}>Flashcard từ vựng</h2>
+      <p style={{ color: 'var(--text-muted)', fontSize: fs(13) }}>{index + 1} / {list.length}</p>
+
+      <div style={practiceStyles.card} onClick={() => setFlipped(!flipped)} role="button" tabIndex={0}>
+        {!flipped ? (
+          <div style={{ textAlign: 'center', fontSize: fs(26), fontWeight: '700', color: 'var(--text-strong)' }}>
+            {card.word}
+          </div>
+        ) : (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: fs(18), fontWeight: '600', marginBottom: '8px' }}>{card.meaning}</div>
+            {card.example_sentence && (
+              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic' }}>
+                "{card.example_sentence}"
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ textAlign: 'center', fontSize: fs(12), color: 'var(--text-muted)', marginTop: '12px' }}>
+          (Bấm vào thẻ để lật)
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button style={styles.backButton} onClick={prev}>← Trước</button>
+        <button style={styles.button} onClick={next}>Tiếp theo →</button>
+      </div>
+
+      <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+        <Icon name="back" size={16} /> Thoát
+      </button>
+    </>
+  )
+}
+
+
 function AppContent({ settings }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
@@ -462,19 +624,34 @@ function AppContent({ settings }) {
   const [mistakes, setMistakes] = useState([])
   const [showReview, setShowReview] = useState(false)
   const [showPractice, setShowPractice] = useState(false)
+  const [showVocab, setShowVocab] = useState(false)
   const [username, setUsername] = useState('')
   const [existingProfiles, setExistingProfiles] = useState([])
+  const [usernameError, setUsernameError] = useState('')
+  const [showEditProfile, setShowEditProfile] = useState(false)
+  const [showProfileMenu, setShowProfileMenu] = useState(false)
+  const [editForm, setEditForm] = useState({ nativeLanguage: '', targetLanguage: '', goal: '' })
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [conversations, setConversations] = useState([])
   const [currentConversationId, setCurrentConversationId] = useState(null)
-
+  const [currentTopic, setCurrentTopic] = useState(null)
+  const [showTopicPicker, setShowTopicPicker] = useState(false)
+  const speechLang = toSpeechLang(profile.targetLanguage)
+  const [dailyStats, setDailyStats] = useState({ messagesToday: 0, streak: 0 })
   useEffect(() => {
   window.api.getProfiles().then((res) => {
     setExistingProfiles(res.profiles || [])
   })
 }, [])
   
-  const handleStartNewAccount = () => {
+const handleStartNewAccount = async () => {
   if (!username.trim()) return
+  setUsernameError('')
+  const res = await window.api.checkUsername({ username: username.trim() })
+  if (!res.available) {
+    setUsernameError('Tên này đã có người dùng, hãy chọn tên khác.')
+    return
+  }
   setStep(1)
 }
 
@@ -526,12 +703,17 @@ function AppContent({ settings }) {
   feedback: result.feedback
 })
 
-setProfileId(saveResult.id)
+if (!saveResult.success) {
+  alert('Tên tài khoản đã bị trùng, vui lòng quay lại và đổi tên khác.')
+  setIsLoading(false)
+  return
+}
+
 setProfileId(saveResult.id)
 setConversations([])
 setCurrentConversationId(null)
 handleNext()
-handleNext()
+
 
   } catch (error) {
     console.error('Error:', error)
@@ -544,11 +726,47 @@ handleNext()
   setMistakes(result.mistakes || [])
   setShowReview(true)
 }
+
+const handleOpenEditProfile = () => {
+  setEditForm({
+    nativeLanguage: profile.nativeLanguage,
+    targetLanguage: profile.targetLanguage,
+    goal: profile.goal
+  })
+  setShowEditProfile(true)
+}
+
+const handleSaveEditProfile = async () => {
+  setIsSavingProfile(true)
+  const res = await window.api.updateProfile({
+    profileId,
+    nativeLanguage: editForm.nativeLanguage,
+    targetLanguage: editForm.targetLanguage,
+    goal: editForm.goal
+  })
+  if (res.success) {
+    setProfile({ ...profile, ...editForm })
+    setShowEditProfile(false)
+  }
+  setIsSavingProfile(false)
+}
+
+
 const refreshMistakes = async () => {
   if (!profileId) return
   const res = await window.api.getMistakes({ profileId })
   setMistakes(res.mistakes || [])
 }
+
+const refreshDailyStats = async () => {
+  if (!profileId) return
+  const res = await window.api.getDailyStats({ profileId })
+  setDailyStats({ messagesToday: res.messagesToday || 0, streak: res.streak || 0 })
+}
+
+useEffect(() => {
+  refreshDailyStats()
+}, [profileId])
 
 useEffect(() => {
   refreshMistakes()
@@ -562,14 +780,22 @@ const loadConversations = async (pid) => {
 
 const switchConversation = async (convId) => {
   setCurrentConversationId(convId)
+  const conv = conversations.find((c) => c.id === convId)
+  setCurrentTopic(conv?.topic || null)
   const res = await window.api.getConversationMessages({ conversationId: convId })
   const loaded = (res.messages || []).map(m => ({ role: m.role, text: m.text }))
   setChatHistory(loaded)
 }
 
 const handleNewConversation = () => {
+  setShowTopicPicker(true)
+}
+
+const selectTopicAndStart = (topicId) => {
+  setCurrentTopic(topicId === 'free' ? null : topicId)
   setCurrentConversationId(null)
   setChatHistory([])
+  setShowTopicPicker(false)
 }
 
 const handleDeleteConversation = async (convId, e) => {
@@ -596,6 +822,7 @@ const handleSendMessage = async () => {
     const result = await window.api.sendChatMessage({
       profileId: profileId,
       conversationId: currentConversationId,
+      topic: currentTopic,
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
@@ -609,6 +836,7 @@ const handleSendMessage = async () => {
     }
     loadConversations(profileId)
     refreshMistakes()
+    refreshDailyStats()
   } catch (error) {
     console.error('Error:', error)
   } finally {
@@ -626,10 +854,11 @@ const handleLogout = () => {
   setUsername('')
   setShowReview(false)
   setShowPractice(false)
-  setShowReview(false)
-  setShowPractice(false)
   setConversations([])
   setCurrentConversationId(null)
+  setCurrentTopic(null)
+  setShowTopicPicker(false)
+  setShowVocab(false)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -648,30 +877,58 @@ if (step === 0) {
   return (
     <div style={styles.container} className="fade-in" key="login">
       <style>{fadeStyle}</style>
+      <style>{loginCss}</style>
       <h2 style={styles.question}>Chào mừng trở lại!</h2>
 
-      {existingProfiles.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '300px' }}>
-          {existingProfiles.map((p) => (
-            <button key={p.id} style={styles.button} onClick={() => handleLoginExisting(p)}>
-              {p.username} ({p.cefr_level})
+      <div style={styles.loginWrapper}>
+        {existingProfiles.length > 0 && (
+          <div style={styles.loginCard}>
+            <div style={styles.loginCardTitle}>Tài khoản của bạn</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {existingProfiles.map((p) => (
+                <button
+                  key={p.id}
+                  className="account-row"
+                  style={styles.accountRow}
+                  onClick={() => handleLoginExisting(p)}
+                >
+                  <span style={styles.accountAvatar}>{p.username.charAt(0).toUpperCase()}</span>
+                  <span style={styles.accountInfo}>
+                    <span style={styles.accountName}>{p.username}</span>
+                    <span style={styles.accountLevel}>Trình độ {p.cefr_level}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={styles.loginCard}>
+          <div style={styles.loginCardTitle}>Tạo tài khoản mới</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <input
+              style={{ ...styles.input, width: '100%' }}
+              type="text"
+              placeholder="Nhập tên của bạn"
+              value={username}
+              onChange={(e) => {
+                setUsername(e.target.value)
+                setUsernameError('')
+              }}
+            />
+            {usernameError && (
+              <p style={{ color: '#c0392b', fontSize: fs(13), margin: 0 }}>{usernameError}</p>
+            )}
+            <button
+              style={{ ...styles.button, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              onClick={handleStartNewAccount}
+              disabled={!username.trim()}
+            >
+              <Icon name="user" size={16} /> Bắt đầu
             </button>
-          ))}
+          </div>
         </div>
-      )}
-
-      <p style={{ fontSize: fs(14), color: 'var(--text-muted)' }}>— hoặc —</p>
-
-      <input
-        style={styles.input}
-        type="text"
-        placeholder="Nhập tên để tạo tài khoản mới"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-      />
-      <button style={styles.button} onClick={handleStartNewAccount} disabled={!username.trim()}>
-        Tạo tài khoản mới
-      </button>
+      </div>
     </div>
   )
 }
@@ -811,6 +1068,71 @@ if (showReview) {
   )
 }
 
+if (showEditProfile) {
+  return (
+    <div style={styles.container} className="fade-in" key="edit-profile">
+      <style>{fadeStyle}</style>
+      <h2 style={styles.question}>Chỉnh sửa thông tin</h2>
+
+      <div style={styles.loginCard}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <div style={styles.loginCardTitle}>Ngôn ngữ mẹ đẻ</div>
+            <input
+              style={{ ...styles.input, width: '100%' }}
+              value={editForm.nativeLanguage}
+              onChange={(e) => setEditForm({ ...editForm, nativeLanguage: e.target.value })}
+            />
+          </div>
+          <div>
+            <div style={styles.loginCardTitle}>Ngôn ngữ đang học</div>
+            <input
+              style={{ ...styles.input, width: '100%' }}
+              value={editForm.targetLanguage}
+              onChange={(e) => setEditForm({ ...editForm, targetLanguage: e.target.value })}
+            />
+          </div>
+          <div>
+            <div style={styles.loginCardTitle}>Mục tiêu học</div>
+            <select
+              style={{ ...styles.input, width: '100%' }}
+              value={editForm.goal}
+              onChange={(e) => setEditForm({ ...editForm, goal: e.target.value })}
+            >
+              <option value="travel">Du lịch</option>
+              <option value="work">Công việc</option>
+              <option value="exam">Thi cử (IELTS/TOEFL...)</option>
+              <option value="general">Giao tiếp chung</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button
+          style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          onClick={() => setShowEditProfile(false)}
+          disabled={isSavingProfile}
+        >
+          <Icon name="back" size={16} /> Huỷ
+        </button>
+        <button
+          style={styles.button}
+          onClick={handleSaveEditProfile}
+          disabled={isSavingProfile || !editForm.nativeLanguage.trim() || !editForm.targetLanguage.trim()}
+        >
+          {isSavingProfile ? 'Đang lưu...' : 'Lưu thay đổi'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+
+if (showVocab) {
+  return <VocabScreen profileId={profileId} onExit={() => setShowVocab(false)} />
+}
+
 if (showPractice) {
   return (
     <PracticeScreen
@@ -828,20 +1150,53 @@ return (
     <style>{fadeStyle}</style>
     <style>{layoutCss}</style>
     <style>{sidebarCss}</style>
+    
+    {showTopicPicker && (
+      <div style={settingsStyles.overlay} onClick={() => setShowTopicPicker(false)}>
+        <div style={settingsStyles.modal} onClick={(e) => e.stopPropagation()}>
+          <div style={settingsStyles.header}>
+            <h3 style={{ margin: 0, fontSize: fs(18), fontWeight: '700' }}>Chọn chủ đề luyện tập</h3>
+            <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setShowTopicPicker(false)}>
+              <Icon name="close" />
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {topicOptions.map((t) => (
+              <button
+                key={t.id}
+                style={{ ...styles.sidebarButton, textAlign: 'left' }}
+                onClick={() => selectTopicAndStart(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* Sidebar trái */}
-    <aside className="sidebar" style={styles.sidebar}>
-      <div style={styles.avatar}>{username ? username.charAt(0).toUpperCase() : '?'}</div>
-      <div style={{ fontWeight: '700', fontSize: fs(18) }}>{username || 'Học viên'}</div>
-      <div style={styles.levelBadge}>Trình độ {placementResult?.level}</div>
-      <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>
-        Mục tiêu: {goalLabels[profile.goal] || profile.goal}
-      </div>
-            <div style={styles.convSection}>
-        <button style={styles.newChatButton} onClick={handleNewConversation}>
-          <Icon name="plus" size={16} /> Đoạn chat mới
+        <aside className="sidebar" style={styles.sidebarV2}>
+      <button style={styles.newChatButton} onClick={handleNewConversation}>
+        <Icon name="plus" size={16} /> Đoạn chat mới
+      </button>
+
+      <nav style={styles.navList}>
+        <button className="nav-item" style={styles.navItem} onClick={handleOpenReview}>
+          <Icon name="book" size={17} /> Sổ tay lỗi sai
         </button>
-              {conversations.map((c) => (
+        <button className="nav-item" style={styles.navItem} onClick={() => setShowPractice(true)}>
+          <Icon name="repeat" size={17} /> <span style={{ flex: 1, textAlign: 'left' }}>Ôn tập</span>
+          {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={() => setShowVocab(true)}>
+          <Icon name="cards" size={17} /> Từ vựng
+        </button>
+      </nav>
+
+      <div style={styles.convSectionV2}>
+        {conversations.length > 0 && <div style={styles.sectionLabel}>Đoạn chat</div>}
+        {conversations.map((c) => (
           <div
             key={c.id}
             className="conv-item"
@@ -863,16 +1218,49 @@ return (
           </div>
         ))}
       </div>
-      <button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleOpenReview}>
-  <Icon name="book" /> Sổ tay lỗi sai
-</button>
-<button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={() => setShowPractice(true)}>
-  <Icon name="repeat" /> <span style={{ flex: 1 }}>Ôn tập</span>
-  {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
-</button>
-<button style={{ ...styles.sidebarButton, display: 'flex', alignItems: 'center', gap: '10px' }} onClick={handleLogout}>
-  <Icon name="logout" /> Đăng xuất
-</button>
+
+      <div style={{ position: 'relative' }}>
+        {showProfileMenu && (
+          <>
+            <div style={styles.menuOverlay} onClick={() => setShowProfileMenu(false)} />
+            <div style={styles.profileMenu}>
+              <button
+                className="nav-item"
+                style={styles.navItem}
+                onClick={() => {
+                  setShowProfileMenu(false)
+                  handleOpenEditProfile()
+                }}
+              >
+                <Icon name="edit" size={15} /> Chỉnh sửa thông tin
+              </button>
+              <button
+                className="nav-item"
+                style={{ ...styles.navItem, color: '#ef4444' }}
+                onClick={handleLogout}
+              >
+                <Icon name="logout" size={15} /> Đăng xuất
+              </button>
+            </div>
+          </>
+        )}
+
+        <button
+          className="profile-bar"
+          style={styles.profileBar}
+          onClick={() => setShowProfileMenu((v) => !v)}
+        >
+          <span style={styles.profileAvatarSmall}>
+            {username ? username.charAt(0).toUpperCase() : '?'}
+          </span>
+          <span style={styles.profileInfo}>
+            <span style={styles.profileName}>{username || 'Học viên'}</span>
+            <span style={styles.profileLevelText}>
+              {placementResult?.level} · {goalLabels[profile.goal] || profile.goal}
+            </span>
+          </span>
+        </button>
+      </div>
     </aside>
 
     {/* Khu vực chat giữa */}
@@ -903,14 +1291,25 @@ return (
       alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
     }}
   >
-    <div
-      style={{
-        ...styles.chatBubble,
-        background: msg.role === 'user' ? 'var(--bubble-user-bg)' : 'var(--bubble-ai-bg)',
-        color: msg.role === 'user' ? 'var(--bubble-user-text)' : 'var(--text)'
-      }}
-    >
-      {formatMessage(msg.text)}
+       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
+      {msg.role === 'model' && (
+        <button
+          style={styles.speakButton}
+          onClick={() => speakText(msg.text, speechLang)}
+          title="Nghe đọc"
+        >
+          <Icon name="speaker" size={14} />
+        </button>
+      )}
+      <div
+        style={{
+          ...styles.chatBubble,
+          background: msg.role === 'user' ? 'var(--bubble-user-bg)' : 'var(--bubble-ai-bg)',
+          color: msg.role === 'user' ? 'var(--bubble-user-text)' : 'var(--text)'
+        }}
+      >
+        {formatMessage(msg.text)}
+      </div>
     </div>
     {settings.showInlineMistakes && msg.mistakes && msg.mistakes.length > 0 && (
       <div style={styles.mistakeBox}>
@@ -930,7 +1329,7 @@ return (
         {isChatLoading && <TypingIndicator />}
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
+           <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
         <input
           style={{ ...styles.input, width: '100%' }}
           value={chatInput}
@@ -951,13 +1350,30 @@ return (
   >
     <Icon name="send" size={20} />
   </button>
-</div>
+</div> 
     </main>
 
     {/* Panel thống kê phải */}
     <aside className="right-panel" style={styles.rightPanel}>
       <h3 style={{ margin: 0, fontSize: fs(16), fontWeight: '700' }}>Thống kê của bạn</h3>
-
+            <div style={styles.statCard}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+          <Icon name="flame" size={18} />
+          <span style={{ fontSize: fs(18), fontWeight: '700' }}>{dailyStats.streak}</span>
+          <span style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>ngày liên tiếp</span>
+        </div>
+        <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginBottom: '4px' }}>
+          Mục tiêu hôm nay: {Math.min(dailyStats.messagesToday, DAILY_GOAL)}/{DAILY_GOAL} tin nhắn
+        </div>
+        <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
+          <div style={{
+            width: `${Math.min(100, (dailyStats.messagesToday / DAILY_GOAL) * 100)}%`,
+            height: '100%',
+            background: 'var(--accent)',
+            borderRadius: '999px'
+          }} />
+        </div>
+      </div>
       <div style={styles.statCard}>
         <div style={{ fontSize: fs(32), fontWeight: '700', color: 'var(--accent)' }}>{mistakes.length}</div>
         <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>lỗi đã ghi nhận</div>
@@ -1326,7 +1742,185 @@ const styles = {
     padding: '2px',
     display: 'flex',
     opacity: 0.6
-  }
+  },
+    loginWrapper: {
+    width: '380px',
+    maxWidth: '92vw',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px'
+  },
+  loginCard: {
+    padding: '20px',
+    borderRadius: '20px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    boxShadow: 'var(--shadow)',
+    boxSizing: 'border-box',
+    textAlign: 'left'
+  },
+  loginCardTitle: {
+    fontSize: fs(13),
+    fontWeight: '700',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '12px'
+  },
+  accountRow: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '10px 12px',
+    borderRadius: '14px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  accountAvatar: {
+    width: '38px',
+    height: '38px',
+    borderRadius: '50%',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: '700',
+    fontSize: fs(15),
+    flexShrink: 0
+  },
+  accountInfo: { display: 'flex', flexDirection: 'column', gap: '2px' },
+  accountName: { fontSize: fs(15), fontWeight: '600', color: 'var(--text)' },
+  accountLevel: { fontSize: fs(12), color: 'var(--text-muted)' },
+
+    speakButton: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+
+    sidebarV2: {
+    width: '260px',
+    flexShrink: 0,
+    height: '100vh',
+    padding: '14px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    background: 'var(--panel)',
+    borderRight: '1px solid var(--border-soft)',
+    boxSizing: 'border-box'
+  },
+  navList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    marginBottom: '8px'
+  },
+  navItem: {
+    width: '100%',
+    padding: '9px 10px',
+    borderRadius: '10px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    fontSize: fs(14),
+    fontWeight: '500',
+    textAlign: 'left',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    boxSizing: 'border-box'
+  },
+  sectionLabel: {
+    fontSize: fs(11),
+    fontWeight: '700',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    padding: '6px 10px 4px'
+  },
+  convSectionV2: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px'
+  },
+  profileBar: {
+    width: '100%',
+    padding: '8px 10px',
+    borderRadius: '12px',
+    border: 'none',
+    background: 'transparent',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    boxSizing: 'border-box',
+    textAlign: 'left'
+  },
+  profileAvatarSmall: {
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    background: '#6366f1',
+    color: '#ffffff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: '700',
+    fontSize: fs(14),
+    flexShrink: 0
+  },
+  profileInfo: { display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 },
+  profileName: {
+    fontSize: fs(14),
+    fontWeight: '600',
+    color: 'var(--text)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  },
+  profileLevelText: {
+    fontSize: fs(11),
+    color: 'var(--text-muted)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis'
+  },
+  profileMenu: {
+    position: 'absolute',
+    bottom: 'calc(100% + 6px)',
+    left: 0,
+    width: '100%',
+    padding: '6px',
+    borderRadius: '12px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    boxShadow: 'var(--shadow)',
+    zIndex: 1100,
+    boxSizing: 'border-box'
+  },
+  menuOverlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 1050
+  },
 }
 
 const practiceStyles = {

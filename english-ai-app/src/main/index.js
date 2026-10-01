@@ -40,7 +40,7 @@ function createWindow() {
     height: 670,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === 'linux' ? { icon } : {}),
+    icon: icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -100,6 +100,14 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
 
     ipcMain.handle('save-profile', async (event, profileData) => {
     try {
+      const existing = db.prepare(`
+        SELECT id FROM profile WHERE username = ? COLLATE NOCASE LIMIT 1
+      `).get(profileData.username)
+
+      if (existing) {
+        return { success: false, error: 'username_taken' }
+      }
+
       const stmt = db.prepare(`
         INSERT INTO profile (username, native_language, target_language, goal, cefr_level, feedback)
         VALUES (?, ?, ?, ?, ?,?)
@@ -115,13 +123,32 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
       return { success: true, id: result.lastInsertRowid }
     } catch (error) {
       console.error('DB error:', error)
+      return { success: false, error: 'db_error' }
+    }
+  })
+
+
+      ipcMain.handle('update-profile', async (event, { profileId, nativeLanguage, targetLanguage, goal }) => {
+    try {
+      db.prepare(`
+        UPDATE profile
+        SET native_language = ?, target_language = ?, goal = ?
+        WHERE id = ?
+      `).run(nativeLanguage, targetLanguage, goal, profileId)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
       return { success: false }
     }
   })
 
-      ipcMain.handle('send-chat-message', async (event, {profileId, conversationId, cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
+          ipcMain.handle('send-chat-message', async (event, {profileId, conversationId, topic, cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
     try {
-      const systemContext = `Bạn là một gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}, mục tiêu học: ${goal}.
+      const topicLine = topic && topic !== 'free'
+        ? `\nCHỦ ĐỀ BÀI HỌC: Hãy xoay toàn bộ cuộc hội thoại quanh chủ đề "${topic}". Dẫn dắt học viên luyện tập từ vựng và tình huống liên quan đến chủ đề này, câu hỏi/gợi ý tiếp theo luôn bám sát chủ đề.`
+        : ''
+
+      const systemContext = `Bạn là một gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}, mục tiêu học: ${goal}.${topicLine}
 
 QUY TẮC NGÔN NGỮ:
 - Nếu trình độ A1/A2: trả lời song ngữ — câu bằng ${targetLanguage} trước, kèm bản dịch ngắn bằng ${nativeLanguage} trong ngoặc.
@@ -145,16 +172,19 @@ Luôn trả lời CHỈ bằng JSON theo đúng format sau, không thêm chữ n
       "corrected": "phần đã sửa đúng",
       "explanation": "giải thích ngắn gọn bằng tiếng Việt"
     }
+  ],
+  "newVocabulary": [
+    { "word": "từ/cụm từ mới đáng học xuất hiện trong phần reply của bạn (không phải lỗi)", "meaning": "nghĩa ngắn gọn bằng tiếng Việt", "example": "một câu ví dụ ngắn dùng từ này" }
   ]
 }
-Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "mistakes" rỗng: [].`
+Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. Tối đa 2 mục trong "newVocabulary" mỗi lượt, để rỗng nếu không có từ nào đặc biệt.`
 
       const contents = [
         { role: 'user', parts: [{ text: systemContext }] },
-        { role: 'model', parts: [{ text: '{"reply": "Đã hiểu, tôi sẽ trả lời đúng định dạng JSON.", "mistakes": []}' }] },
+        { role: 'model', parts: [{ text: '{"reply": "Đã hiểu, tôi sẽ trả lời đúng định dạng JSON.", "mistakes": [], "newVocabulary": []}' }] },
         ...history.map(h => ({
           role: h.role === 'user' ? 'user' : 'model',
-          parts: [{ text: h.role === 'user' ? h.text : JSON.stringify({ reply: h.text, mistakes: [] }) }]
+          parts: [{ text: h.role === 'user' ? h.text : JSON.stringify({ reply: h.text, mistakes: [], newVocabulary: [] }) }]
         })),
         { role: 'user', parts: [{ text: message }] }
       ]
@@ -167,17 +197,15 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
       const text = response.text.replace(/```json|```/g, '').trim()
       const parsed = JSON.parse(text)
 
-      // Tạo đoạn chat mới nếu đây là tin nhắn đầu tiên
       let convId = conversationId
       if (!convId) {
         const title = message.length > 40 ? message.slice(0, 40) + '…' : message
         const created = db.prepare(`
-          INSERT INTO conversations (profile_id, title) VALUES (?, ?)
-        `).run(profileId, title)
+          INSERT INTO conversations (profile_id, title, topic) VALUES (?, ?, ?)
+        `).run(profileId, title, topic || null)
         convId = created.lastInsertRowid
       }
 
-      // Lưu các lỗi sai vào DB
       if (parsed.mistakes && parsed.mistakes.length > 0) {
         const stmt = db.prepare(`
           INSERT INTO mistakes (profile_id, category, original_text, corrected_text, explanation)
@@ -188,7 +216,16 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
         }
       }
 
-      // Lưu cả 2 tin nhắn vào đúng đoạn chat
+      if (parsed.newVocabulary && parsed.newVocabulary.length > 0) {
+        const checkStmt = db.prepare(`SELECT id FROM vocabulary WHERE profile_id = ? AND word = ? COLLATE NOCASE`)
+        const insStmt = db.prepare(`INSERT INTO vocabulary (profile_id, word, meaning, example_sentence) VALUES (?, ?, ?, ?)`)
+        for (const v of parsed.newVocabulary) {
+          if (!v.word) continue
+          const exists = checkStmt.get(profileId, v.word)
+          if (!exists) insStmt.run(profileId, v.word, v.meaning || '', v.example || '')
+        }
+      }
+
       const saveMsgStmt = db.prepare(`
         INSERT INTO chat_messages (profile_id, conversation_id, role, text) VALUES (?, ?, ?, ?)
       `)
@@ -232,6 +269,18 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
     }
   })
 
+    ipcMain.handle('check-username', async (event, { username }) => {
+    try {
+      const existing = db.prepare(`
+        SELECT id FROM profile WHERE username = ? COLLATE NOCASE LIMIT 1
+      `).get(username)
+      return { success: true, available: !existing }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, available: true }
+    }
+  })
+
   ipcMain.handle('get-chat-history', async (event, { profileId }) => {
     try {
       const stmt = db.prepare(`
@@ -260,7 +309,7 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
 
     // ===== Đoạn chat (conversations) =====
 
-  ipcMain.handle('get-conversations', async (event, { profileId }) => {
+   ipcMain.handle('get-conversations', async (event, { profileId }) => {
     try {
       const rows = db.prepare(`
         SELECT * FROM conversations WHERE profile_id = ? ORDER BY updated_at DESC
@@ -294,6 +343,49 @@ Nếu học viên KHÔNG mắc lỗi nào trong tin nhắn này, để mảng "m
       return { success: false }
     }
   })
+
+  ipcMain.handle('get-vocabulary', async (event, { profileId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT * FROM vocabulary WHERE profile_id = ? ORDER BY created_at DESC
+      `).all(profileId)
+      return { success: true, vocabulary: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, vocabulary: [] }
+    }
+  })
+
+  ipcMain.handle('get-daily-stats', async (event, { profileId }) => {
+    try {
+      const dates = db.prepare(`
+        SELECT DISTINCT date(created_at) as day
+        FROM chat_messages
+        WHERE profile_id = ? AND role = 'user'
+      `).all(profileId).map(r => r.day)
+
+      const todayRow = db.prepare(`
+        SELECT COUNT(*) as c FROM chat_messages
+        WHERE profile_id = ? AND role = 'user' AND date(created_at) = date('now','localtime')
+      `).get(profileId)
+
+      const dateSet = new Set(dates)
+      const toKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      let cursor = new Date()
+      if (!dateSet.has(toKey(cursor))) cursor.setDate(cursor.getDate() - 1)
+      let streak = 0
+      while (dateSet.has(toKey(cursor))) {
+        streak++
+        cursor.setDate(cursor.getDate() - 1)
+      }
+
+      return { success: true, messagesToday: todayRow?.c || 0, streak }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, messagesToday: 0, streak: 0 }
+    }
+  })
+
   // ===== Spaced repetition =====
 
   ipcMain.handle('get-due-mistakes', async (event, { profileId }) => {

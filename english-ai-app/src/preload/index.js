@@ -14,7 +14,11 @@ const api = {
   recordReviewResult: (data) => ipcRenderer.invoke('record-review-result', data),
   getConversations: (data) => ipcRenderer.invoke('get-conversations', data),
   getConversationMessages: (data) => ipcRenderer.invoke('get-conversation-messages', data),
-  deleteConversation: (data) => ipcRenderer.invoke('delete-conversation', data)
+  deleteConversation: (data) => ipcRenderer.invoke('delete-conversation', data),
+  checkUsername: (data) => ipcRenderer.invoke('check-username', data),
+  updateProfile: (data) => ipcRenderer.invoke('update-profile', data),
+  getVocabulary: (data) => ipcRenderer.invoke('get-vocabulary', data),
+  getDailyStats: (data) => ipcRenderer.invoke('get-daily-stats', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
