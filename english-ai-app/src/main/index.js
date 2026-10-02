@@ -4,7 +4,7 @@ import {appendFileSync} from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { GoogleGenAI } from '@google/genai'
-import 'dotenv/config'
+import { config } from 'dotenv'
 import db from './db.js'
 
 config({
