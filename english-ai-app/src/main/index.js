@@ -1,10 +1,30 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import {appendFileSync} from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { GoogleGenAI } from '@google/genai'
 import 'dotenv/config'
 import db from './db.js'
+
+config({
+  path: app.isPackaged ? join(process.resourcesPath, '.env') : join(app.getAppPath(), '.env')
+})
+
+
+function logError(label, error) {
+  try {
+    appendFileSync(
+      join(app.getPath('userData'), 'error.log'),
+      `[${new Date().toISOString()}] ${label}: ${error?.status || ''} ${error?.message || error}\n`
+    )
+  } catch {
+   
+  }
+}
+
+logError('startup', `GEMINI_API_KEY loaded = ${!!process.env.GEMINI_API_KEY}`)
+
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
 async function generateWithRetry(params, maxRetries = 2) {
@@ -17,6 +37,7 @@ async function generateWithRetry(params, maxRetries = 2) {
         await new Promise(resolve => setTimeout(resolve, 2000)) // chờ 2 giây
         continue
       }
+      logError('gemini', error)
       throw error
     }
   }
