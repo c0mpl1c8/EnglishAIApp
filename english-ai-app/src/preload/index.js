@@ -19,6 +19,8 @@ const api = {
   updateProfile: (data) => ipcRenderer.invoke('update-profile', data),
   getVocabulary: (data) => ipcRenderer.invoke('get-vocabulary', data),
   getDailyStats: (data) => ipcRenderer.invoke('get-daily-stats', data),
+  addVocabularyWords: (data) => ipcRenderer.invoke('add-vocabulary-words', data),
+  setLevel: (data) => ipcRenderer.invoke('set-level', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

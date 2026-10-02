@@ -24,6 +24,48 @@ async function generateWithRetry(params, maxRetries = 2) {
 
 const REVIEW_LADDER = [0, 3, 7, 14]
 
+const LEVEL_PROFILES = {
+  A1: {
+    language: 'Song ngữ: mỗi câu tiếng Anh kèm bản dịch tiếng mẹ đẻ trong ngoặc.',
+    style: 'Chỉ dùng từ vựng 500-800 từ thông dụng nhất, câu tối đa 8 từ, thì hiện tại đơn.',
+    topics: 'Chào hỏi, gia đình, đồ vật, thức ăn, thói quen hằng ngày.',
+    correction: 'Chỉ sửa 1-2 lỗi quan trọng nhất mỗi lượt, bỏ qua lỗi nhỏ.'
+  },
+  A2: {
+    language: 'Song ngữ, nhưng bản dịch chỉ cho từ hoặc cụm khó.',
+    style: 'Câu đơn giản và ghép ngắn, thì hiện tại, quá khứ đơn, tương lai gần.',
+    topics: 'Mua sắm, du lịch cơ bản, kể chuyện hôm qua, kế hoạch gần.',
+    correction: 'Sửa tối đa 2-3 lỗi, ưu tiên lỗi ngữ pháp nền tảng.'
+  },
+  B1: {
+    language: 'Chủ yếu tiếng Anh, chỉ dịch khi học viên hỏi.',
+    style: 'Câu có mệnh đề phụ, các thì hoàn thành, từ nối thông dụng.',
+    topics: 'Công việc, sở thích, kinh nghiệm, ý kiến đơn giản.',
+    correction: 'Sửa lỗi ngữ pháp và chọn từ, gợi ý cách diễn đạt tự nhiên hơn.'
+  },
+  B2: {
+    language: 'Hoàn toàn tiếng Anh.',
+    style: 'Câu phức, câu điều kiện, thể bị động, thành ngữ phổ biến.',
+    topics: 'Xã hội, công nghệ, tranh luận có lập luận.',
+    correction: 'Sửa cả lỗi nhỏ, collocation và độ trang trọng.'
+  },
+  C1: {
+    language: 'Hoàn toàn tiếng Anh, tốc độ và độ phức tạp như người bản xứ.',
+    style: 'Từ vựng học thuật, cấu trúc đảo ngữ, sắc thái ý nghĩa tinh tế.',
+    topics: 'Chủ đề trừu tượng, phân tích, tranh luận phản biện.',
+    correction: 'Chú trọng văn phong, sắc thái, tính tự nhiên và register.'
+  },
+  C2: {
+    language: 'Hoàn toàn tiếng Anh, không giảm tốc, không giải thích từ cơ bản.',
+    style: 'Diễn đạt tinh tế, thành ngữ, ẩn dụ, hài hước, văn phong linh hoạt.',
+    topics: 'Triết học, văn học, chuyên ngành, mọi chủ đề mở.',
+    correction: 'Chỉ sửa khi thật sự sai hoặc thiếu tự nhiên; phản hồi như đồng nghiệp bản xứ.'
+  }
+}
+
+const getProfile = (level) => LEVEL_PROFILES[level] || LEVEL_PROFILES.A1
+const LEVELS = Object.keys(LEVEL_PROFILES)
+
 
 function normalizeAnswer(s) {
   return String(s || '')
@@ -108,9 +150,10 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
         return { success: false, error: 'username_taken' }
       }
 
+      const source = profileData.levelSource || 'placement'
       const stmt = db.prepare(`
-        INSERT INTO profile (username, native_language, target_language, goal, cefr_level, feedback)
-        VALUES (?, ?, ?, ?, ?,?)
+        INSERT INTO profile (username, native_language, target_language, goal, cefr_level, feedback, level_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
       const result = stmt.run(
         profileData.username,
@@ -118,8 +161,12 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
         profileData.targetLanguage,
         profileData.goal,
         profileData.cefrLevel,
-        profileData.feedback
+        profileData.feedback || '',
+        source
       )
+      db.prepare(`
+        INSERT INTO level_history (profile_id, old_level, new_level, source) VALUES (?, NULL, ?, ?)
+      `).run(result.lastInsertRowid, profileData.cefrLevel, source)
       return { success: true, id: result.lastInsertRowid }
     } catch (error) {
       console.error('DB error:', error)
@@ -141,22 +188,44 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
       return { success: false }
     }
   })
-
+        ipcMain.handle('set-level', async (event, { profileId, cefrLevel, source }) => {
+    try {
+      if (!LEVELS.includes(cefrLevel)) return { success: false }
+      const row = db.prepare(`SELECT cefr_level FROM profile WHERE id = ?`).get(profileId)
+      if (!row) return { success: false }
+      if (row.cefr_level !== cefrLevel) {
+        const src = source || 'manual'
+        db.prepare(`UPDATE profile SET cefr_level = ?, level_source = ? WHERE id = ?`).run(cefrLevel, src, profileId)
+        db.prepare(`
+          INSERT INTO level_history (profile_id, old_level, new_level, source) VALUES (?, ?, ?, ?)
+        `).run(profileId, row.cefr_level, cefrLevel, src)
+      }
+      return { success: true, cefrLevel }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
           ipcMain.handle('send-chat-message', async (event, {profileId, conversationId, topic, cefrLevel, targetLanguage, nativeLanguage, goal, history, message }) => {
     try {
+      const p = getProfile(cefrLevel)
+
       const topicLine = topic && topic !== 'free'
         ? `\nCHỦ ĐỀ BÀI HỌC: Hãy xoay toàn bộ cuộc hội thoại quanh chủ đề "${topic}". Dẫn dắt học viên luyện tập từ vựng và tình huống liên quan đến chủ đề này, câu hỏi/gợi ý tiếp theo luôn bám sát chủ đề.`
         : ''
 
       const systemContext = `Bạn là một gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}, mục tiêu học: ${goal}.${topicLine}
 
-QUY TẮC NGÔN NGỮ:
-- Nếu trình độ A1/A2: trả lời song ngữ — câu bằng ${targetLanguage} trước, kèm bản dịch ngắn bằng ${nativeLanguage} trong ngoặc.
-- Nếu trình độ B1 trở lên: chủ yếu bằng ${targetLanguage}.
+CÁCH BẠN NÓI CHUYỆN VỚI TRÌNH ĐỘ ${cefrLevel} (bắt buộc tuân theo):
+- Ngôn ngữ: ${p.language}
+- Độ khó: ${p.style}
+- Chủ đề phù hợp: ${p.topics}
+- Cách sửa lỗi: ${p.correction}
+Luôn giữ đúng độ khó này, không nói đơn giản hơn hoặc phức tạp hơn trình độ đã nêu.
 
 QUY TẮC TRÌNH BÀY "reply" (bắt buộc, để dễ đọc):
-- Chia thành các đoạn ngắn, mỗi đoạn tối đa 1-2 câu, ngăn cách bằng ký tự xuống dòng. Trong JSON hãy viết đúng chuỗi \n, KHÔNG xuống dòng thật bên trong chuỗi.
-- Với A1/A2: mỗi câu bằng ${targetLanguage} nằm trên một dòng riêng, bản dịch ${nativeLanguage} trong ngoặc nằm ngay dòng bên dưới.
+- Chia thành các đoạn ngắn, mỗi đoạn tối đa 1-2 câu, ngăn cách bằng ký tự xuống dòng. Trong JSON hãy viết đúng chuỗi \\n, KHÔNG xuống dòng thật bên trong chuỗi.
+- Nếu trả lời song ngữ: câu bằng ${targetLanguage} nằm trên một dòng riêng, bản dịch ${nativeLanguage} trong ngoặc nằm ngay dòng bên dưới.
 - Ví dụ minh hoạ đặt trên dòng riêng, bắt đầu bằng "Example:".
 - Câu hỏi hoặc yêu cầu luyện tập cuối cùng đặt trên dòng riêng ở cuối.
 - Dùng **in đậm** cho từ hoặc cấu trúc quan trọng.
@@ -164,7 +233,7 @@ QUY TẮC TRÌNH BÀY "reply" (bắt buộc, để dễ đọc):
 QUY TẮC PHẢN HỒI (bắt buộc):
 Luôn trả lời CHỈ bằng JSON theo đúng format sau, không thêm chữ nào khác ngoài JSON:
 {
-  "reply": "câu trả lời trò chuyện với học viên (theo quy tắc ngôn ngữ ở trên)",
+  "reply": "câu trả lời trò chuyện với học viên (theo các quy tắc ở trên)",
   "mistakes": [
     {
       "category": "loại lỗi (ví dụ: thì động từ, trật tự từ, từ vựng, chính tả)",
@@ -356,6 +425,45 @@ Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. T
     }
   })
 
+  ipcMain.handle('add-vocabulary-words', async (event, { profileId, words, targetLanguage, nativeLanguage, cefrLevel }) => {
+    try {
+      const list = [...new Set(
+        String(words || '').split(/[,;\n]/).map((w) => w.trim()).filter(Boolean)
+      )].slice(0, 10)
+      if (list.length === 0) return { success: false, error: 'empty' }
+
+      const checkStmt = db.prepare(`SELECT id FROM vocabulary WHERE profile_id = ? AND word = ? COLLATE NOCASE`)
+      const fresh = list.filter((w) => !checkStmt.get(profileId, w))
+      const skipped = list.filter((w) => !fresh.includes(w))
+      if (fresh.length === 0) return { success: true, added: [], skipped }
+
+      const p = getProfile(cefrLevel)
+      const response = await generateWithRetry({
+        model: 'gemini-3.6-flash',
+        contents: `Học viên có tiếng mẹ đẻ là ${nativeLanguage}, đang học ${targetLanguage}, trình độ CEFR ${cefrLevel}. Họ muốn thêm các từ sau vào flashcard: ${JSON.stringify(fresh)}.
+Với mỗi từ: nếu viết sai chính tả thì sửa lại; "meaning" là nghĩa phổ biến nhất bằng ${nativeLanguage}, ngắn gọn; "example" là một câu ví dụ bằng ${targetLanguage} có chứa từ đó, độ khó phù hợp: ${p.style}
+Trả lời CHỈ bằng một mảng JSON, cùng thứ tự với danh sách: [{"word": "...", "meaning": "...", "example": "..."}]`
+      })
+
+      const text = response.text.replace(/```json|```/g, '').trim()
+      const match = text.match(/\[[\s\S]*\]/)
+      const items = JSON.parse(match ? match[0] : text)
+
+      const insStmt = db.prepare(`INSERT INTO vocabulary (profile_id, word, meaning, example_sentence) VALUES (?, ?, ?, ?)`)
+      const added = []
+      for (const v of items) {
+        if (!v.word || checkStmt.get(profileId, v.word)) continue
+        insStmt.run(profileId, v.word, v.meaning || '', v.example || '')
+        added.push(v.word)
+      }
+      return { success: true, added, skipped }
+    } catch (error) {
+      console.error('Add vocabulary error:', error)
+      return { success: false, error: 'ai_failed' }
+    }
+  })
+
+
   ipcMain.handle('get-daily-stats', async (event, { profileId }) => {
     try {
       const dates = db.prepare(`
@@ -403,18 +511,20 @@ Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. T
     }
   })
 
-  ipcMain.handle('generate-review-question', async (event, { mistake, targetLanguage, nativeLanguage }) => {
+    ipcMain.handle('generate-review-question', async (event, { mistake, targetLanguage, nativeLanguage, cefrLevel }) => {
     try {
+      const p = getProfile(cefrLevel)
       const response = await generateWithRetry({
         model: 'gemini-3.6-flash',
-        contents: `Bạn là gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}.
+        contents: `Bạn là gia sư dạy ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
 Học viên từng mắc lỗi sau:
 - Loại lỗi: ${mistake.category}
 - Câu sai: "${mistake.original_text}"
 - Sửa đúng: "${mistake.corrected_text}"
 - Giải thích: ${mistake.explanation}
 
-Hãy tạo MỘT bài tập ôn lại đúng quy tắc này: viết một câu MỚI bằng ${targetLanguage} (khác câu gốc, độ dài ngắn, đời thường) có chứa cùng kiểu lỗi đó. Học viên sẽ phải viết lại cả câu cho đúng. Câu phải chỉ có một cách sửa rõ ràng.
+Hãy tạo MỘT bài tập ôn lại đúng quy tắc này: viết một câu MỚI bằng ${targetLanguage} (khác câu gốc, ngắn, đời thường) có chứa cùng kiểu lỗi đó. Học viên sẽ phải viết lại cả câu cho đúng. Câu phải chỉ có một cách sửa rõ ràng.
+Độ khó của câu mới phải phù hợp trình độ ${cefrLevel}: ${p.style}
 Trả lời CHỈ bằng JSON: {"instruction": "yêu cầu ngắn bằng tiếng Việt", "sentence": "câu có lỗi", "answer": "câu đã sửa đúng hoàn chỉnh"}`
       })
 

@@ -5,6 +5,16 @@ import { join } from 'path'
 const dbPath = join(app.getPath('userData'), 'app.db')
 const db = new Database(dbPath)
 
+// Thêm cột nếu chưa có (kiểm tra thật, không nuốt lỗi)
+function addColumnIfMissing(table, column, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+    console.log(`Đã thêm cột ${table}.${column}`)
+  }
+}
+
+// ===== profile =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS profile (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,11 +26,22 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('profile', 'username', 'TEXT')
+addColumnIfMissing('profile', 'level_source', 'TEXT')
 
-try {
-  db.exec(`ALTER TABLE profile ADD COLUMN username TEXT`)
-} catch (e) {}
+// ===== level_history =====
+db.exec(`
+  CREATE TABLE IF NOT EXISTS level_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    old_level TEXT,
+    new_level TEXT,
+    source TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 
+// ===== mistakes =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS mistakes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -32,14 +53,10 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('mistakes', 'next_review_at', 'TEXT')
+addColumnIfMissing('mistakes', 'interval_days', 'INTEGER DEFAULT 0')
 
-try {
-  db.exec(`ALTER TABLE mistakes ADD COLUMN next_review_at TEXT`)
-} catch (e) {}
-try {
-  db.exec(`ALTER TABLE mistakes ADD COLUMN interval_days INTEGER DEFAULT 0`)
-} catch (e) {}
-
+// ===== chat_messages =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,11 +66,9 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('chat_messages', 'conversation_id', 'INTEGER')
 
-try {
-  db.exec(`ALTER TABLE chat_messages ADD COLUMN conversation_id INTEGER`)
-} catch (e) {}
-
+// ===== conversations =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,11 +78,9 @@ db.exec(`
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('conversations', 'topic', 'TEXT')
 
-try {
-  db.exec(`ALTER TABLE conversations ADD COLUMN topic TEXT`)
-} catch (e) {}
-
+// ===== vocabulary =====
 db.exec(`
   CREATE TABLE IF NOT EXISTS vocabulary (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

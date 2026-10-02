@@ -82,10 +82,13 @@ const iconPaths = {
   close: ['M18 6 6 18', 'm6 6 12 12'],
   warning: ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3', 'M12 9v4', 'M12 17h.01'],
   back: ['m12 19-7-7 7-7', 'M19 12H5'],
+  next: ['M5 12h14', 'm12 5 7 7-7 7'],
   repeat: ['m17 2 4 4-4 4', 'M3 11v-1a4 4 0 0 1 4-4h14', 'm7 22-4-4 4-4', 'M21 13v1a4 4 0 0 1-4 4H3'],
   check: ['M20 6 9 17l-5-5'],
   send: ['m5 12 7-7 7 7', 'M12 19V5'],
   plus: ['M12 5v14', 'M5 12h14'],
+  minus: ['M5 12h14'],
+  chevron: ['m6 9 6 6 6-6'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
   edit: ['M12 20h9', 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z'],
@@ -258,6 +261,238 @@ const DAILY_GOAL = 5
 
 const SESSION_SIZE = 10
 
+const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
+
+const levelOptions = [
+  { id: 'A1', desc: 'Mới bắt đầu, hiểu câu rất đơn giản' },
+  { id: 'A2', desc: 'Sơ cấp, giao tiếp tình huống quen thuộc' },
+  { id: 'B1', desc: 'Trung cấp, kể chuyện và nêu ý kiến đơn giản' },
+  { id: 'B2', desc: 'Trung cấp cao, trao đổi trôi chảy nhiều chủ đề' },
+  { id: 'C1', desc: 'Nâng cao, diễn đạt linh hoạt và tự nhiên' },
+  { id: 'C2', desc: 'Thành thạo, gần như người bản xứ' }
+]
+
+const levelDropdownOptions = levelOptions.map((l) => ({ value: l.id, label: `${l.id} · ${l.desc.split(',')[0]}` }))
+
+const toOptions = (arr) => arr.map((n) => ({ value: n, label: n }))
+
+const nativeLanguageOptions = toOptions([
+  'Tiếng Việt', 'Tiếng Anh', 'Tiếng Trung', 'Tiếng Nhật', 'Tiếng Hàn',
+  'Tiếng Pháp', 'Tiếng Đức', 'Tiếng Tây Ban Nha'
+])
+
+const targetLanguageOptions = toOptions([
+  'Tiếng Anh', 'Tiếng Pháp', 'Tiếng Nhật', 'Tiếng Hàn',
+  'Tiếng Trung', 'Tiếng Đức', 'Tiếng Tây Ban Nha'
+])
+
+const goalOptions = [
+  { value: 'travel', label: 'Du lịch' },
+  { value: 'work', label: 'Công việc' },
+  { value: 'exam', label: 'Thi cử (IELTS/TOEFL...)' },
+  { value: 'general', label: 'Giao tiếp chung' }
+]
+
+const dropdownCss = `
+  .dd-option:hover { background: var(--surface-soft) !important; }
+  .level-card:hover { border-color: var(--accent) !important; }
+`
+
+const dropdownStyles = {
+  trigger: {
+    width: '100%',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(15),
+    cursor: 'pointer',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '10px',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  overlay: { position: 'fixed', inset: 0, zIndex: 1050 },
+  menu: {
+    position: 'absolute',
+    top: 'calc(100% + 6px)',
+    left: 0,
+    width: '100%',
+    maxHeight: '220px',
+    overflowY: 'auto',
+    padding: '6px',
+    borderRadius: '12px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    boxShadow: 'var(--shadow)',
+    zIndex: 1060,
+    boxSizing: 'border-box'
+  },
+  option: {
+    width: '100%',
+    padding: '9px 10px',
+    borderRadius: '8px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text)',
+    fontSize: fs(14),
+    cursor: 'pointer',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '8px',
+    textAlign: 'left'
+  },
+  optionActive: { background: 'var(--accent-soft)', color: 'var(--accent-text)', fontWeight: '600' }
+}
+
+const onboardStyles = {
+  card: {
+    width: '420px',
+    maxWidth: '92vw',
+    padding: '24px',
+    borderRadius: '20px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    boxShadow: 'var(--shadow)',
+    boxSizing: 'border-box',
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px'
+  },
+  actions: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '4px' },
+  fieldLabel: {
+    fontSize: fs(12),
+    fontWeight: '700',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '8px'
+  },
+  levelGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' },
+  levelCard: {
+    padding: '10px 12px',
+    borderRadius: '12px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface-soft)',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '3px'
+  },
+  levelCardActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
+  levelCode: { fontSize: fs(15), fontWeight: '700' },
+  levelDesc: { fontSize: fs(11), color: 'var(--text-muted)', lineHeight: 1.35 },
+  levelBar: { display: 'inline-flex', alignItems: 'center', gap: '8px' },
+  levelStep: {
+    padding: '6px 12px',
+    borderRadius: '999px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(12),
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px'
+  },
+  levelPill: {
+    padding: '5px 12px',
+    borderRadius: '999px',
+    background: 'var(--accent-soft)',
+    color: 'var(--accent-text)',
+    fontWeight: '700',
+    fontSize: fs(13)
+  }
+}
+
+function Dropdown({ value, options, onChange, placeholder = 'Chọn...', up = false }) {
+  const [open, setOpen] = useState(false)
+  const hasValue = options.some((o) => o.value === value)
+  const list = value && !hasValue ? [{ value, label: value }, ...options] : options
+  const current = list.find((o) => o.value === value)
+
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      <style>{dropdownCss}</style>
+      <button
+        type="button"
+        style={dropdownStyles.trigger}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span style={{ color: current ? 'var(--text)' : 'var(--text-muted)' }}>
+          {current ? current.label : placeholder}
+        </span>
+        <Icon name="chevron" size={16} />
+      </button>
+
+      {open && (
+        <>
+          <div style={dropdownStyles.overlay} onClick={() => setOpen(false)} />
+          <div
+            role="listbox"
+            style={{ ...dropdownStyles.menu, ...(up ? { top: 'auto', bottom: 'calc(100% + 6px)' } : {}) }}
+          >
+            {list.map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="option"
+                aria-selected={o.value === value}
+                className="dd-option"
+                style={{ ...dropdownStyles.option, ...(o.value === value ? dropdownStyles.optionActive : {}) }}
+                onClick={() => {
+                  onChange(o.value)
+                  setOpen(false)
+                }}
+              >
+                <span>{o.label}</span>
+                {o.value === value && <Icon name="check" size={15} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function StepCard({ current, title, subtitle, children }) {
+  return (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      {current && <ProgressDots current={current} total={4} />}
+      <div>
+        <h2 style={styles.question}>{title}</h2>
+        {subtitle && (
+          <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: fs(14), maxWidth: '420px' }}>
+            {subtitle}
+          </p>
+        )}
+      </div>
+      <div style={onboardStyles.card}>{children}</div>
+    </div>
+  )
+}
+
+function Field({ label, children }) {
+  return (
+    <div>
+      <div style={onboardStyles.fieldLabel}>{label}</div>
+      {children}
+    </div>
+  )
+}
+
 const todayLocal = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -336,7 +571,7 @@ function useSpeechInput(lang, onResult) {
 
 
 
-function PracticeScreen({ profileId, profile, onExit }) {
+function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
   const [queue, setQueue] = useState([])
   const [index, setIndex] = useState(0)
   // loadingList | loadingQuestion | answering | checking | feedback | error | empty | done
@@ -355,7 +590,8 @@ function PracticeScreen({ profileId, profile, onExit }) {
     const res = await window.api.generateReviewQuestion({
       mistake,
       targetLanguage: profile.targetLanguage,
-      nativeLanguage: profile.nativeLanguage
+      nativeLanguage: profile.nativeLanguage,
+      cefrLevel
     })
     if (res.success) {
       setQuestion(res.question)
@@ -526,18 +762,86 @@ function PracticeScreen({ profileId, profile, onExit }) {
   )
 }
 
-function VocabScreen({ profileId, onExit }) {
+function AddWordBox({ profileId, profile, cefrLevel, onAdded }) {
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const submit = async () => {
+    if (!text.trim() || busy) return
+    setBusy(true)
+    setMsg('')
+    const res = await window.api.addVocabularyWords({
+      profileId,
+      words: text,
+      targetLanguage: profile.targetLanguage,
+      nativeLanguage: profile.nativeLanguage,
+      cefrLevel
+    })
+    setBusy(false)
+    if (!res.success) {
+      setMsg('Không thêm được lúc này (có thể AI đang quá tải). Bạn thử lại nhé.')
+      return
+    }
+    const parts = []
+    if (res.added.length) parts.push(`Đã thêm: ${res.added.join(', ')}`)
+    if (res.skipped.length) parts.push(`Đã có sẵn: ${res.skipped.join(', ')}`)
+    setMsg(parts.join(' · ') || 'Không có từ nào được thêm.')
+    if (res.added.length) {
+      setText('')
+      onAdded && onAdded()
+    }
+  }
+
+    return (
+    <div style={{ width: '100%', maxWidth: '520px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <input
+          style={{ ...styles.input, width: '100%', textAlign: 'left' }}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          placeholder={busy ? 'Đang nhờ AI điền nghĩa...' : 'Thêm từ mới (cách nhau bằng dấu phẩy)'}
+          disabled={busy}
+        />
+        <button
+          style={{
+            ...styles.sendButton,
+            ...(busy || !text.trim() ? { opacity: 0.4, cursor: 'not-allowed' } : {})
+          }}
+          onClick={submit}
+          disabled={busy || !text.trim()}
+          title="Thêm từ"
+          aria-label="Thêm từ"
+        >
+          <Icon name="plus" size={20} />
+        </button>
+      </div>
+      {msg && <p style={{ margin: '8px 0 0', fontSize: fs(13), color: 'var(--text-muted)', textAlign: 'center' }}>{msg}</p>}
+    </div>
+  )
+}
+function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
   const [list, setList] = useState([])
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  const loadVocabulary = async () => {
+    const res = await window.api.getVocabulary({ profileId })
+    setList(res.vocabulary || [])
+    setLoading(false)
+  }
+
   useEffect(() => {
-    window.api.getVocabulary({ profileId }).then((res) => {
-      setList(res.vocabulary || [])
-      setLoading(false)
-    })
+    loadVocabulary()
   }, [])
+
+  const handleAdded = async () => {
+    await loadVocabulary()
+    setIndex(0) // từ mới nằm đầu danh sách
+    setFlipped(false)
+  }
 
   const wrap = (children) => (
     <div style={styles.container} className="fade-in">
@@ -553,8 +857,14 @@ function VocabScreen({ profileId, onExit }) {
       <>
         <h2 style={styles.question}>Chưa có từ vựng nào</h2>
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px' }}>
-          Trò chuyện thêm với AI để tự động ghi lại những từ vựng hay gặp.
+          Trò chuyện với AI để tự ghi lại từ hay gặp, hoặc tự thêm từ bên dưới.
         </p>
+        <AddWordBox
+          profileId={profileId}
+          profile={profile}
+          cefrLevel={cefrLevel}
+          onAdded={handleAdded}
+        />
         <button style={styles.button} onClick={onExit}>Quay lại</button>
       </>
     )
@@ -569,36 +879,63 @@ function VocabScreen({ profileId, onExit }) {
     setFlipped(false)
     setIndex((i) => (i - 1 + list.length) % list.length)
   }
-
-  return wrap(
+   const speakLang = toSpeechLang(profile?.targetLanguage)
+    return wrap(
     <>
-      <h2 style={styles.question}>Flashcard từ vựng</h2>
-      <p style={{ color: 'var(--text-muted)', fontSize: fs(13) }}>{index + 1} / {list.length}</p>
+      <div>
+        <h2 style={styles.question}>Flashcard từ vựng</h2>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: fs(14) }}>
+          {list.length} từ đã lưu
+        </p>
+      </div>
 
-      <div style={practiceStyles.card} onClick={() => setFlipped(!flipped)} role="button" tabIndex={0}>
+      <div style={vocabStyles.card} onClick={() => setFlipped(!flipped)} role="button" tabIndex={0}>
+        <button
+          style={vocabStyles.cardSpeak}
+          onClick={(e) => {
+            e.stopPropagation()
+            speakText(card.word, speakLang)
+          }}
+          title="Nghe phát âm"
+        >
+          <Icon name="speaker" size={16} />
+        </button>
+
         {!flipped ? (
-          <div style={{ textAlign: 'center', fontSize: fs(26), fontWeight: '700', color: 'var(--text-strong)' }}>
+          <div style={{ fontSize: fs(34), fontWeight: '700', color: 'var(--text-strong)' }}>
             {card.word}
           </div>
         ) : (
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: fs(18), fontWeight: '600', marginBottom: '8px' }}>{card.meaning}</div>
+          <>
+            <div style={{ fontSize: fs(22), fontWeight: '600' }}>{card.meaning}</div>
             {card.example_sentence && (
-              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic' }}>
+              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic', maxWidth: '400px' }}>
                 "{card.example_sentence}"
               </div>
             )}
-          </div>
+          </>
         )}
-        <div style={{ textAlign: 'center', fontSize: fs(12), color: 'var(--text-muted)', marginTop: '12px' }}>
-          (Bấm vào thẻ để lật)
-        </div>
+        <div style={vocabStyles.hint}>{flipped ? 'Bấm để quay lại' : 'Bấm để lật thẻ'}</div>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <button style={styles.backButton} onClick={prev}>← Trước</button>
-        <button style={styles.button} onClick={next}>Tiếp theo →</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+        <button style={vocabStyles.navBtn} onClick={prev} title="Từ trước" aria-label="Từ trước">
+          <Icon name="back" size={18} />
+        </button>
+        <span style={{ minWidth: '60px', textAlign: 'center', fontSize: fs(14), color: 'var(--text-muted)' }}>
+          {index + 1} / {list.length}
+        </span>
+        <button style={vocabStyles.navBtn} onClick={next} title="Từ tiếp theo" aria-label="Từ tiếp theo">
+          <Icon name="next" size={18} />
+        </button>
       </div>
+
+      <AddWordBox
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={cefrLevel}
+        onAdded={handleAdded}
+      />
 
       <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
         <Icon name="back" size={16} /> Thoát
@@ -636,7 +973,12 @@ function AppContent({ settings }) {
   const [currentConversationId, setCurrentConversationId] = useState(null)
   const [currentTopic, setCurrentTopic] = useState(null)
   const [showTopicPicker, setShowTopicPicker] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const speechLang = toSpeechLang(profile.targetLanguage)
+  const [levelMode, setLevelMode] = useState('test')
+  const [manualLevel, setManualLevel] = useState('')
+  const [placementError, setPlacementError] = useState('')
+  const [levelNotice, setLevelNotice] = useState('')
   const [dailyStats, setDailyStats] = useState({ messagesToday: 0, streak: 0 })
   useEffect(() => {
   window.api.getProfiles().then((res) => {
@@ -685,42 +1027,67 @@ const handleStartNewAccount = async () => {
   const handleChange = (field, value) =>{
     setProfile({...profile,[field]:value})
   }
-  const handleSubmitPlacement = async () => {
-  setIsLoading(true)
-  try {
-    const result = await window.api.assessPlacement({
+   const finishRegistration = async (level, feedback, source) => {
+    const saveResult = await window.api.saveProfile({
+      username: username,
+      nativeLanguage: profile.nativeLanguage,
       targetLanguage: profile.targetLanguage,
-      answer: profile.placementAnswer
+      goal: profile.goal,
+      cefrLevel: level,
+      feedback: feedback || '',
+      levelSource: source
     })
-    setPlacementResult(result)
 
-   const saveResult = await window.api.saveProfile({
-  username: username,
-  nativeLanguage: profile.nativeLanguage,
-  targetLanguage: profile.targetLanguage,
-  goal: profile.goal,
-  cefrLevel: result.level,
-  feedback: result.feedback
-})
+    if (!saveResult.success) {
+      alert('Tên tài khoản đã bị trùng, vui lòng quay lại và đổi tên khác.')
+      return
+    }
 
-if (!saveResult.success) {
-  alert('Tên tài khoản đã bị trùng, vui lòng quay lại và đổi tên khác.')
-  setIsLoading(false)
-  return
-}
+    setPlacementResult({ level, feedback: feedback || '' })
+    setProfileId(saveResult.id)
+    setConversations([])
+    setCurrentConversationId(null)
+    handleNext()
+  }
 
-setProfileId(saveResult.id)
-setConversations([])
-setCurrentConversationId(null)
-handleNext()
+  const handleSubmitPlacement = async () => {
+    setIsLoading(true)
+    setPlacementError('')
+    try {
+      const result = await window.api.assessPlacement({
+        targetLanguage: profile.targetLanguage,
+        answer: profile.placementAnswer
+      })
+      if (!LEVELS.includes(result.level)) {
+        setPlacementError('Chưa chấm được lúc này (AI có thể đang quá tải). Bạn thử lại, hoặc chuyển sang "Tự chọn trình độ".')
+        return
+      }
+      await finishRegistration(result.level, result.feedback, 'placement')
+    } catch (error) {
+      console.error('Error:', error)
+      setPlacementError('Có lỗi xảy ra, vui lòng thử lại.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
-
-  } catch (error) {
-    console.error('Error:', error)
-  } finally {
+  const handleSubmitManualLevel = async () => {
+    setIsLoading(true)
+    await finishRegistration(manualLevel, '', 'manual')
     setIsLoading(false)
   }
-}
+
+  const handleChangeLevel = async (delta) => {
+    const current = placementResult?.level || 'A1'
+    const next = LEVELS[LEVELS.indexOf(current) + delta]
+    if (!next) return
+    const res = await window.api.setLevel({ profileId, cefrLevel: next, source: 'manual' })
+    if (res.success) {
+      setPlacementResult({ ...placementResult, level: next })
+      setLevelNotice(`Đã chuyển sang ${next}`)
+      setTimeout(() => setLevelNotice(''), 3000)
+    }
+  }
   const handleOpenReview = async () => {
   const result = await window.api.getMistakes({ profileId })
   setMistakes(result.mistakes || [])
@@ -731,7 +1098,8 @@ const handleOpenEditProfile = () => {
   setEditForm({
     nativeLanguage: profile.nativeLanguage,
     targetLanguage: profile.targetLanguage,
-    goal: profile.goal
+    goal: profile.goal,
+    cefrLevel: placementResult?.level || 'A1'
   })
   setShowEditProfile(true)
 }
@@ -745,7 +1113,12 @@ const handleSaveEditProfile = async () => {
     goal: editForm.goal
   })
   if (res.success) {
-    setProfile({ ...profile, ...editForm })
+    const { cefrLevel, ...rest } = editForm
+    setProfile({ ...profile, ...rest })
+    if (cefrLevel && cefrLevel !== placementResult?.level) {
+      const lv = await window.api.setLevel({ profileId, cefrLevel, source: 'manual' })
+      if (lv.success) setPlacementResult({ ...placementResult, level: cefrLevel })
+    }
     setShowEditProfile(false)
   }
   setIsSavingProfile(false)
@@ -798,8 +1171,15 @@ const selectTopicAndStart = (topicId) => {
   setShowTopicPicker(false)
 }
 
-const handleDeleteConversation = async (convId, e) => {
+const handleDeleteConversation = (conv, e) => {
   e.stopPropagation()
+  setConfirmDelete(conv) 
+}
+
+const confirmDeleteConversation = async () => {
+  if (!confirmDelete) return
+  const convId = confirmDelete.id
+  setConfirmDelete(null)
   await window.api.deleteConversation({ conversationId: convId })
   if (convId === currentConversationId) {
     setCurrentConversationId(null)
@@ -859,6 +1239,9 @@ const handleLogout = () => {
   setCurrentTopic(null)
   setShowTopicPicker(false)
   setShowVocab(false)
+  setLevelMode('test')
+  setManualLevel('')
+  setPlacementError('')
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -933,105 +1316,147 @@ if (step === 0) {
   )
 }
 
-if(step==1){
-    return(
-      <div style={styles.container} className="fade-in" key={step}>
-       <style>{fadeStyle}</style>
-       <ProgressDots current={1} total={4} />
-       <h2 style={styles.question}>Bạn nói ngôn ngữ nào?</h2>
-        <input
-          style={styles.input}
-          type="text"
-          placeholder="Ví dụ: Tiếng Việt"
-          value={profile.nativeLanguage}
-          onChange={(e) => handleChange('nativeLanguage', e.target.value)}
-        />
+if (step === 1) {
+  return (
+    <StepCard key={1} current={1} title="Bạn nói ngôn ngữ nào?" subtitle="AI sẽ dùng ngôn ngữ này để giải thích cho bạn.">
+      <Dropdown
+        value={profile.nativeLanguage}
+        options={nativeLanguageOptions}
+        onChange={(v) => handleChange('nativeLanguage', v)}
+        placeholder="Chọn ngôn ngữ mẹ đẻ"
+      />
+      <div style={onboardStyles.actions}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
+          <Icon name="back" size={16} /> Quay lại
+        </button>
         <button style={styles.button} onClick={handleNext} disabled={!profile.nativeLanguage}>
           Tiếp theo
         </button>
       </div>
-    )
-  }
+    </StepCard>
+  )
+}
 
-  if(step == 2){
-    return(
-       <div style={styles.container} className="fade-in" key={step}>
-        <style>{fadeStyle}</style>
-        <ProgressDots current={2} total={4} />
-        <h2 style={styles.question}>Bạn muốn học ngôn ngữ nào?</h2>
-        <input
-          style={styles.input}
-          type="text"
-          placeholder="Ví dụ: Tiếng Anh"
-          value={profile.targetLanguage}
-          onChange={(e) => handleChange('targetLanguage', e.target.value)}
-        />
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
-            <Icon name="back" size={16} /> Quay lại
-          </button>
-          <button style={styles.button} onClick={handleNext} disabled={!profile.targetLanguage}>
-            Tiếp theo
-          </button>
-        </div>
+if (step === 2) {
+  return (
+    <StepCard key={2} current={2} title="Bạn muốn học ngôn ngữ nào?">
+      <Dropdown
+        value={profile.targetLanguage}
+        options={targetLanguageOptions.filter((o) => o.value !== profile.nativeLanguage)}
+        onChange={(v) => handleChange('targetLanguage', v)}
+        placeholder="Chọn ngôn ngữ muốn học"
+      />
+      <div style={onboardStyles.actions}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
+          <Icon name="back" size={16} /> Quay lại
+        </button>
+        <button style={styles.button} onClick={handleNext} disabled={!profile.targetLanguage}>
+          Tiếp theo
+        </button>
       </div>
-    )
-  }
+    </StepCard>
+  )
+}
 
-if (step == 3){
-     return (
-      <div style={styles.container} className="fade-in" key={step}>
-        <style>{fadeStyle}</style>
-        <ProgressDots current={3} total={4} />
-        <h2 style={styles.question}>Mục tiêu học của bạn là gì?</h2>
-        <select
-          style={styles.input}
-          value={profile.goal}
-          onChange={(e) => handleChange('goal', e.target.value)}
-        >
-          <option value="">-- Chọn mục tiêu --</option>
-          <option value="travel">Du lịch</option>
-          <option value="work">Công việc</option>
-          <option value="exam">Thi cử (IELTS/TOEFL...)</option>
-          <option value="general">Giao tiếp chung</option>
-        </select>
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
-            <Icon name="back" size={16} /> Quay lại
-          </button>
-          <button style={styles.button} onClick={handleNext} disabled={!profile.goal}>
-            Hoàn tất
-          </button>
-        </div>
+if (step === 3) {
+  return (
+    <StepCard key={3} current={3} title="Mục tiêu học của bạn là gì?">
+      <Dropdown
+        value={profile.goal}
+        options={goalOptions}
+        onChange={(v) => handleChange('goal', v)}
+        placeholder="Chọn mục tiêu"
+      />
+      <div style={onboardStyles.actions}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
+          <Icon name="back" size={16} /> Quay lại
+        </button>
+        <button style={styles.button} onClick={handleNext} disabled={!profile.goal}>
+          Tiếp theo
+        </button>
       </div>
-    )
-  }
+    </StepCard>
+  )
+}
 
 if (step === 4) {
   return (
-    <div style={styles.container} className="fade-in" key={step}>
-      <style>{fadeStyle}</style>
-      <ProgressDots current={4} total={4} />
-      <h2 style={styles.question}>Đánh giá trình độ</h2>
-      <p>Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.</p>
-      <textarea
-        style={styles.textarea}
-        placeholder="Type your answer here..."
-        value={profile.placementAnswer || ''}
-        onChange={(e) => handleChange('placementAnswer', e.target.value)}
-        disabled={isLoading}
-      />
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <button style={styles.backButton} onClick={handleBack} disabled={isLoading}><Icon name="back" size={16} /> Quay lại</button>
-        <button
-          style={styles.button}
-          onClick={handleSubmitPlacement}
-          disabled={!profile.placementAnswer || isLoading}
-        >
-          {isLoading ? 'Đang chấm điểm...' : 'Nộp bài'}
-        </button>
+    <StepCard
+      key={4}
+      current={4}
+      title="Trình độ của bạn"
+      subtitle="Làm bài đánh giá ngắn hoặc tự chọn. Bạn có thể đổi lại bất cứ lúc nào."
+    >
+      <style>{dropdownCss}</style>
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <SegmentedControl
+          value={levelMode}
+          onChange={setLevelMode}
+          options={[
+            { value: 'test', label: 'Làm bài đánh giá' },
+            { value: 'manual', label: 'Tự chọn trình độ' }
+          ]}
+        />
       </div>
-    </div>
+
+      {levelMode === 'test' ? (
+        <>
+          <p style={{ margin: 0, fontSize: fs(14), color: 'var(--text-soft)' }}>
+            Hãy viết 2-3 câu bằng {profile.targetLanguage} mô tả một ngày bình thường của bạn.
+          </p>
+          <textarea
+            style={{ ...styles.textarea, width: '100%', boxSizing: 'border-box' }}
+            placeholder="Type your answer here..."
+            value={profile.placementAnswer || ''}
+            onChange={(e) => handleChange('placementAnswer', e.target.value)}
+            disabled={isLoading}
+          />
+          {placementError && <p style={{ margin: 0, color: '#c0392b', fontSize: fs(13) }}>{placementError}</p>}
+        </>
+      ) : (
+        <div style={onboardStyles.levelGrid}>
+          {levelOptions.map((l) => (
+            <button
+              key={l.id}
+              className="level-card"
+              style={{ ...onboardStyles.levelCard, ...(manualLevel === l.id ? onboardStyles.levelCardActive : {}) }}
+              onClick={() => setManualLevel(l.id)}
+              disabled={isLoading}
+            >
+              <span style={onboardStyles.levelCode}>{l.id}</span>
+              <span style={onboardStyles.levelDesc}>{l.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={onboardStyles.actions}>
+        <button
+          style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          onClick={handleBack}
+          disabled={isLoading}
+        >
+          <Icon name="back" size={16} /> Quay lại
+        </button>
+        {levelMode === 'test' ? (
+          <button
+            style={styles.button}
+            onClick={handleSubmitPlacement}
+            disabled={!profile.placementAnswer || isLoading}
+          >
+            {isLoading ? 'Đang chấm...' : 'Nộp bài'}
+          </button>
+        ) : (
+          <button
+            style={styles.button}
+            onClick={handleSubmitManualLevel}
+            disabled={!manualLevel || isLoading}
+          >
+            {isLoading ? 'Đang lưu...' : 'Bắt đầu'}
+          </button>
+        )}
+      </div>
+    </StepCard>
   )
 }
 
@@ -1070,45 +1495,38 @@ if (showReview) {
 
 if (showEditProfile) {
   return (
-    <div style={styles.container} className="fade-in" key="edit-profile">
-      <style>{fadeStyle}</style>
-      <h2 style={styles.question}>Chỉnh sửa thông tin</h2>
+    <StepCard key="edit" title="Chỉnh sửa thông tin" subtitle="Thay đổi áp dụng từ tin nhắn tiếp theo. Lỗi sai và lịch ôn tập vẫn được giữ.">
+      <Field label="Ngôn ngữ mẹ đẻ">
+        <Dropdown
+          value={editForm.nativeLanguage}
+          options={nativeLanguageOptions}
+          onChange={(v) => setEditForm({ ...editForm, nativeLanguage: v })}
+        />
+      </Field>
+      <Field label="Ngôn ngữ đang học">
+        <Dropdown
+          value={editForm.targetLanguage}
+          options={targetLanguageOptions}
+          onChange={(v) => setEditForm({ ...editForm, targetLanguage: v })}
+        />
+      </Field>
+      <Field label="Mục tiêu học">
+        <Dropdown
+          value={editForm.goal}
+          options={goalOptions}
+          onChange={(v) => setEditForm({ ...editForm, goal: v })}
+        />
+      </Field>
+      <Field label="Trình độ">
+        <Dropdown
+          up
+          value={editForm.cefrLevel}
+          options={levelDropdownOptions}
+          onChange={(v) => setEditForm({ ...editForm, cefrLevel: v })}
+        />
+      </Field>
 
-      <div style={styles.loginCard}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div>
-            <div style={styles.loginCardTitle}>Ngôn ngữ mẹ đẻ</div>
-            <input
-              style={{ ...styles.input, width: '100%' }}
-              value={editForm.nativeLanguage}
-              onChange={(e) => setEditForm({ ...editForm, nativeLanguage: e.target.value })}
-            />
-          </div>
-          <div>
-            <div style={styles.loginCardTitle}>Ngôn ngữ đang học</div>
-            <input
-              style={{ ...styles.input, width: '100%' }}
-              value={editForm.targetLanguage}
-              onChange={(e) => setEditForm({ ...editForm, targetLanguage: e.target.value })}
-            />
-          </div>
-          <div>
-            <div style={styles.loginCardTitle}>Mục tiêu học</div>
-            <select
-              style={{ ...styles.input, width: '100%' }}
-              value={editForm.goal}
-              onChange={(e) => setEditForm({ ...editForm, goal: e.target.value })}
-            >
-              <option value="travel">Du lịch</option>
-              <option value="work">Công việc</option>
-              <option value="exam">Thi cử (IELTS/TOEFL...)</option>
-              <option value="general">Giao tiếp chung</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '10px' }}>
+      <div style={onboardStyles.actions}>
         <button
           style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           onClick={() => setShowEditProfile(false)}
@@ -1119,18 +1537,25 @@ if (showEditProfile) {
         <button
           style={styles.button}
           onClick={handleSaveEditProfile}
-          disabled={isSavingProfile || !editForm.nativeLanguage.trim() || !editForm.targetLanguage.trim()}
+          disabled={isSavingProfile || !editForm.nativeLanguage || !editForm.targetLanguage}
         >
-          {isSavingProfile ? 'Đang lưu...' : 'Lưu thay đổi'}
+          {isSavingProfile ? 'Đang lưu...' : 'Lưu'}
         </button>
       </div>
-    </div>
+    </StepCard>
   )
 }
 
 
 if (showVocab) {
-  return <VocabScreen profileId={profileId} onExit={() => setShowVocab(false)} />
+  return (
+    <VocabScreen
+      profileId={profileId}
+      profile={profile}
+      cefrLevel={placementResult?.level || 'A1'}
+      onExit={() => setShowVocab(false)}
+    />
+  )
 }
 
 if (showPractice) {
@@ -1138,6 +1563,7 @@ if (showPractice) {
     <PracticeScreen
       profileId={profileId}
       profile={profile}
+      cefrLevel={placementResult?.level || 'A1'}
       onExit={() => {
         setShowPractice(false)
         refreshMistakes()
@@ -1174,7 +1600,30 @@ return (
         </div>
       </div>
     )}
-
+        {confirmDelete && (
+      <div style={settingsStyles.overlay} onClick={() => setConfirmDelete(null)}>
+        <div style={{ ...settingsStyles.modal, width: '380px' }} onClick={(e) => e.stopPropagation()}>
+          <h3 style={{ margin: '0 0 10px', fontSize: fs(18), fontWeight: '700' }}>Xoá đoạn chat này?</h3>
+          <p style={{ margin: '0 0 6px', fontSize: fs(14), fontWeight: '600', color: 'var(--text-soft)', wordBreak: 'break-word' }}>
+            "{confirmDelete.title || 'Đoạn chat mới'}"
+          </p>
+          <p style={{ margin: '0 0 20px', fontSize: fs(13), color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Toàn bộ tin nhắn trong đoạn chat này sẽ bị xoá và không khôi phục được. Lỗi sai và từ vựng đã ghi nhận vẫn được giữ lại.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <button
+              style={{ ...styles.backButton, padding: '10px 20px' }}
+              onClick={() => setConfirmDelete(null)}
+            >
+              Huỷ
+            </button>
+            <button style={styles.dangerButton} onClick={confirmDeleteConversation}>
+              Xoá
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Sidebar trái */}
         <aside className="sidebar" style={styles.sidebarV2}>
       <button style={styles.newChatButton} onClick={handleNewConversation}>
@@ -1210,7 +1659,7 @@ return (
             <button
               className="conv-delete"
               style={styles.convDelete}
-              onClick={(e) => handleDeleteConversation(c.id, e)}
+              onClick={(e) => handleDeleteConversation(c, e)}
               title="Xoá đoạn chat"
             >
               <Icon name="trash" size={13} />
@@ -1265,7 +1714,29 @@ return (
 
     {/* Khu vực chat giữa */}
     <main style={styles.mainArea}>
-      <h2 style={{ ...styles.question, fontSize: fs(26) }}>Luyện tập cùng AI</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <h2 style={{ ...styles.question, fontSize: fs(26) }}>Luyện tập cùng AI</h2>
+        <div style={onboardStyles.levelBar}>
+          <button
+            style={{ ...onboardStyles.levelStep, ...(placementResult?.level === 'A1' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
+            onClick={() => handleChangeLevel(-1)}
+            disabled={placementResult?.level === 'A1'}
+            title="AI nói dễ hơn một bậc"
+          >
+            <Icon name="minus" size={13} /> Dễ hơn
+          </button>
+          <span style={onboardStyles.levelPill}>{placementResult?.level}</span>
+          <button
+            style={{ ...onboardStyles.levelStep, ...(placementResult?.level === 'C2' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
+            onClick={() => handleChangeLevel(1)}
+            disabled={placementResult?.level === 'C2'}
+            title="AI nói khó hơn một bậc"
+          >
+            Khó hơn <Icon name="plus" size={13} />
+          </button>
+          {levelNotice && <span style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>{levelNotice}</span>}
+        </div>
+      </div>
 
       <div style={styles.chatBoxFull}>
         {chatHistory.length === 0 && !isChatLoading && (
@@ -1671,6 +2142,16 @@ const styles = {
     justifyContent: 'center',
     boxSizing: 'border-box'
   },
+    dangerButton: {
+    padding: '10px 24px',
+    fontSize: fs(14),
+    fontWeight: '700',
+    borderRadius: '999px',
+    border: 'none',
+    background: '#ef4444',
+    color: '#ffffff',
+    cursor: 'pointer'
+  },
     sendButton: {
     width: '48px',
     height: '48px',
@@ -1953,6 +2434,64 @@ const practiceStyles = {
   bad: { background: 'rgba(192,57,43,0.12)', border: '1px solid rgba(192,57,43,0.5)' }
 }
 
+const vocabStyles = {
+  card: {
+    position: 'relative',
+    width: '100%',
+    maxWidth: '520px',
+    minHeight: '220px',
+    padding: '28px 24px 40px',
+    borderRadius: '20px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface)',
+    boxShadow: 'var(--shadow)',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '12px',
+    cursor: 'pointer',
+    boxSizing: 'border-box',
+    textAlign: 'center'
+  },
+  hint: {
+    position: 'absolute',
+    bottom: '12px',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontSize: fs(12),
+    color: 'var(--text-muted)'
+  },
+  cardSpeak: {
+    position: 'absolute',
+    top: '12px',
+    right: '12px',
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    border: '1.5px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  navBtn: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '50%',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  }
+}
+
 const settingsStyles = {
   gear: {
     position: 'fixed',
@@ -2038,68 +2577,155 @@ const settingsStyles = {
   }
 }
 
-function SettingsModal({ settings, onChange, onClose }) {
-  const choices = (key, items) => (
-    <div style={settingsStyles.optionRow}>
-      {items.map(([value, label]) => (
+const rowStyles = {
+  row: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '16px',
+    padding: '16px 0',
+    borderBottom: '1px solid var(--border-soft)'
+  },
+  rowLast: { borderBottom: 'none', paddingBottom: '4px' },
+  textCol: { minWidth: 0, flex: 1 },
+  title: { fontSize: fs(14), fontWeight: '600', color: 'var(--text)' },
+  desc: { fontSize: fs(12), color: 'var(--text-muted)', marginTop: '3px', lineHeight: 1.4 },
+  segmented: {
+    display: 'inline-flex',
+    padding: '3px',
+    gap: '2px',
+    borderRadius: '10px',
+    background: 'var(--surface-soft)',
+    border: '1px solid var(--border-soft)',
+    flexShrink: 0
+  },
+  segment: {
+    padding: '6px 12px',
+    borderRadius: '8px',
+    border: '1px solid transparent',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    fontSize: fs(13),
+    fontWeight: '500',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px'
+  },
+  segmentActive: {
+    background: 'var(--border)',
+    color: 'var(--text-strong)'
+  }
+}
+
+function SegmentedControl({ value, options, onChange }) {
+  return (
+    <div style={rowStyles.segmented} role="group">
+      {options.map((o) => (
         <button
-          key={value}
-          style={{
-            ...settingsStyles.optionButton,display: 'inline-flex', alignItems: 'center', gap: '6px',
-            ...(settings[key] === value ? settingsStyles.optionActive : {})
-          }}
-          onClick={() => onChange({ [key]: value })}
+          key={o.value}
+          title={o.title || o.label}
+          aria-pressed={value === o.value}
+          style={{ ...rowStyles.segment, ...(value === o.value ? rowStyles.segmentActive : {}) }}
+          onClick={() => onChange(o.value)}
         >
-          {label}
+          {o.icon && <Icon name={o.icon} size={15} />}
+          {o.label}
         </button>
       ))}
     </div>
   )
+}
 
+function ToggleSwitch({ checked, onChange }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      style={{
+        width: '40px',
+        height: '22px',
+        borderRadius: '999px',
+        border: 'none',
+        padding: 0,
+        position: 'relative',
+        cursor: 'pointer',
+        flexShrink: 0,
+        background: checked ? 'var(--accent)' : 'var(--border)',
+        transition: 'background 0.2s ease'
+      }}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: '3px',
+          left: checked ? '21px' : '3px',
+          width: '16px',
+          height: '16px',
+          borderRadius: '50%',
+          background: '#ffffff',
+          transition: 'left 0.2s ease'
+        }}
+      />
+    </button>
+  )
+}
+
+
+function SettingsModal({ settings, onChange, onClose }) {
   return (
     <div style={settingsStyles.overlay} onClick={onClose}>
-      <div style={settingsStyles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={settingsStyles.header}>
+      <div style={{ ...settingsStyles.modal, width: '520px' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ ...settingsStyles.header, marginBottom: '4px' }}>
           <h3 style={{ margin: 0, fontSize: fs(20), fontWeight: '700' }}>Cài đặt</h3>
-          <button style={{ ...settingsStyles.closeButton, display: 'flex', alignItems: 'center', }} onClick={onClose}><Icon name="close" /></button>
-        </div>
-
-        <div style={settingsStyles.group}>
-          <div style={settingsStyles.label}>Giao diện</div>
-          {choices('theme', [
-  ['light', <><Icon name="sun" size={15} /> Sáng</>],
-  ['dark', <><Icon name="moon" size={15} /> Tối</>],
-  ['system', <><Icon name="monitor" size={15} /> Theo hệ thống</>]
-])}
-        </div>
-
-        <div style={settingsStyles.group}>
-          <div style={settingsStyles.label}>Cỡ chữ</div>
-          {choices('fontSize', [
-            ['small', 'Nhỏ'],
-            ['medium', 'Vừa'],
-            ['large', 'Lớn'],
-            ['xlarge', 'Rất lớn']
-          ])}
-          <div style={settingsStyles.preview}>Xem trước: I like learning English every day.</div>
-        </div>
-
-        <div style={settingsStyles.toggleRow}>
-          <div>
-            <div style={settingsStyles.label}>Hiện gợi ý sửa lỗi trong khung chat</div>
-            <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>
-              Lỗi vẫn được lưu vào Sổ tay dù tắt
-            </div>
-          </div>
-          <button
-            style={{
-              ...settingsStyles.optionButton,display: 'inline-flex', alignItems: 'center', gap: '6px',
-              ...(settings.showInlineMistakes ? settingsStyles.optionActive : {})
-            }}
-            onClick={() => onChange({ showInlineMistakes: !settings.showInlineMistakes })}
-          >
-            {settings.showInlineMistakes ? 'Bật' : 'Tắt'}
+          <button style={{ ...settingsStyles.closeButton, display: 'flex', alignItems: 'center' }} onClick={onClose}>
+            <Icon name="close" />
           </button>
+        </div>
+
+        <div style={rowStyles.row}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Giao diện</div>
+          </div>
+          <SegmentedControl
+            value={settings.theme}
+            onChange={(v) => onChange({ theme: v })}
+            options={[
+              { value: 'system', icon: 'monitor', title: 'Theo hệ thống' },
+              { value: 'light', icon: 'sun', title: 'Sáng' },
+              { value: 'dark', icon: 'moon', title: 'Tối' }
+            ]}
+          />
+        </div>
+
+        <div style={rowStyles.row}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Cỡ chữ</div>
+            <div style={{ ...rowStyles.desc, fontSize: fs(14) }}>I like learning English every day.</div>
+          </div>
+          <SegmentedControl
+            value={settings.fontSize}
+            onChange={(v) => onChange({ fontSize: v })}
+            options={[
+              { value: 'small', label: 'Nhỏ' },
+              { value: 'medium', label: 'Vừa' },
+              { value: 'large', label: 'Lớn' },
+              { value: 'xlarge', label: 'Rất lớn' }
+            ]}
+          />
+        </div>
+
+        <div style={{ ...rowStyles.row, ...rowStyles.rowLast }}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Gợi ý sửa lỗi trong khung chat</div>
+            <div style={rowStyles.desc}>Lỗi vẫn được lưu vào Sổ tay dù tắt</div>
+          </div>
+          <ToggleSwitch
+            checked={settings.showInlineMistakes}
+            onChange={(v) => onChange({ showInlineMistakes: v })}
+          />
         </div>
       </div>
     </div>
