@@ -89,6 +89,7 @@ const iconPaths = {
   plus: ['M12 5v14', 'M5 12h14'],
   minus: ['M5 12h14'],
   chevron: ['m6 9 6 6 6-6'],
+  sparkle: ['M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
   edit: ['M12 20h9', 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z'],
@@ -390,6 +391,28 @@ const onboardStyles = {
   levelCode: { fontSize: fs(15), fontWeight: '700' },
   levelDesc: { fontSize: fs(11), color: 'var(--text-muted)', lineHeight: 1.35 },
   levelBar: { display: 'inline-flex', alignItems: 'center', gap: '8px' },
+    fieldInput: {
+    width: '100%',
+    padding: '12px 16px',
+    borderRadius: '12px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(15),
+    outline: 'none',
+    boxSizing: 'border-box',
+    textAlign: 'left'
+  },
+  chips: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' },
+  chip: {
+    padding: '5px 10px',
+    borderRadius: '999px',
+    border: '1.5px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--text-soft)',
+    fontSize: fs(12),
+    cursor: 'pointer'
+  },
   levelStep: {
     padding: '6px 12px',
     borderRadius: '999px',
@@ -410,6 +433,107 @@ const onboardStyles = {
     color: 'var(--accent-text)',
     fontWeight: '700',
     fontSize: fs(13)
+  }
+}
+
+const notesStyles = {
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '20px 24px 16px',
+    borderBottom: '1px solid var(--border-soft)'
+  },
+  headIcon: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '12px',
+    background: 'var(--accent-soft)',
+    color: 'var(--accent-text)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  title: { fontSize: fs(17), fontWeight: '700', color: 'var(--text-strong)' },
+  subtitle: { fontSize: fs(12), color: 'var(--text-muted)', marginTop: '2px' },
+  body: { padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: '16px' },
+  toggleCard: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '16px',
+    padding: '12px 14px',
+    borderRadius: '14px',
+    background: 'var(--surface-soft)',
+    border: '1px solid var(--border-soft)'
+  },
+  labelRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '8px' },
+  label: {
+    fontSize: fs(12),
+    fontWeight: '700',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px'
+  },
+  actions: { display: 'flex', gap: '6px' },
+  smallAction: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    padding: '5px 10px',
+    borderRadius: '999px',
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--text-soft)',
+    fontSize: fs(12),
+    fontWeight: '500',
+    cursor: 'pointer'
+  },
+  textarea: {
+    width: '100%',
+    height: '140px',
+    padding: '12px 14px',
+    borderRadius: '14px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(14),
+    lineHeight: 1.5,
+    fontFamily: "'Segoe UI', sans-serif",
+    outline: 'none',
+    resize: 'none',
+    boxSizing: 'border-box'
+  },
+  hint: { fontSize: fs(12), color: 'var(--text-muted)', lineHeight: 1.5 },
+  footer: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '14px 24px',
+    borderTop: '1px solid var(--border-soft)',
+    background: 'var(--surface-soft)'
+  },
+  ghostBtn: {
+    padding: '9px 18px',
+    borderRadius: '999px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    fontSize: fs(14),
+    fontWeight: '600',
+    cursor: 'pointer'
+  },
+  primaryBtn: {
+    padding: '9px 26px',
+    borderRadius: '999px',
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    fontSize: fs(14),
+    fontWeight: '600',
+    cursor: 'pointer'
   }
 }
 
@@ -468,7 +592,7 @@ function Dropdown({ value, options, onChange, placeholder = 'Chọn...', up = fa
 
 function StepCard({ current, title, subtitle, children }) {
   return (
-    <div style={styles.container} className="fade-in">
+    <div style={{ ...styles.container, justifyContent: 'safe center', overflowY: 'auto' }} className="fade-in">
       <style>{fadeStyle}</style>
       {current && <ProgressDots current={current} total={4} />}
       <div>
@@ -489,6 +613,55 @@ function Field({ label, children }) {
     <div>
       <div style={onboardStyles.fieldLabel}>{label}</div>
       {children}
+    </div>
+  )
+}
+const occupationSuggestions = ['Sinh viên', 'Lập trình viên', 'Y tế', 'Kinh doanh', 'Giáo viên', 'Thiết kế']
+
+function ProfileExtras({ occupation, interests, onChange }) {
+  return (
+    <>
+      <Field label="Nghề nghiệp / lĩnh vực (không bắt buộc)">
+        <input
+          style={onboardStyles.fieldInput}
+          maxLength={60}
+          value={occupation || ''}
+          onChange={(e) => onChange('occupation', e.target.value)}
+          placeholder="Ví dụ: kỹ sư xây dựng"
+        />
+        <div style={onboardStyles.chips}>
+          {occupationSuggestions.map((s) => (
+            <button key={s} type="button" style={onboardStyles.chip} onClick={() => onChange('occupation', s)}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Mối quan tâm (không bắt buộc)">
+        <input
+          style={onboardStyles.fieldInput}
+          maxLength={200}
+          value={interests || ''}
+          onChange={(e) => onChange('interests', e.target.value)}
+          placeholder="Ví dụ: bóng đá, du lịch, nấu ăn"
+        />
+      </Field>
+    </>
+  )
+}
+
+function FamiliarityBar({ total, fam }) {
+  if (!fam) return null
+  const pct = fam.nextAt ? Math.min(100, ((total - fam.min) / (fam.nextAt - fam.min)) * 100) : 100
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: fs(12), color: 'var(--text-muted)', marginBottom: '4px' }}>
+        <span>Mức thân quen: <strong style={{ color: 'var(--text)' }}>{fam.name}</strong></span>
+        <span>{fam.nextAt ? `${total}/${fam.nextAt} tin` : 'Cao nhất'}</span>
+      </div>
+      <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)', borderRadius: '999px' }} />
+      </div>
     </div>
   )
 }
@@ -950,7 +1123,9 @@ function AppContent({ settings }) {
   const [profile, setProfile]= useState({
     nativeLanguage:'',
     targetLanguage:'',
-    goal:''
+    goal:'',
+    occupation:'',
+    interests:''
   })
   const [profileId, setProfileId] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -979,7 +1154,11 @@ function AppContent({ settings }) {
   const [manualLevel, setManualLevel] = useState('')
   const [placementError, setPlacementError] = useState('')
   const [levelNotice, setLevelNotice] = useState('')
-  const [dailyStats, setDailyStats] = useState({ messagesToday: 0, streak: 0 })
+  const [dailyStats, setDailyStats] = useState({ messagesToday: 0, streak: 0, totalMessages: 0, familiarity: null })
+  const [showNotes, setShowNotes] = useState(false)
+  const [notesForm, setNotesForm] = useState({ notes: '', enabled: true })
+  const [notesBusy, setNotesBusy] = useState(false)
+  const [notesMsg, setNotesMsg] = useState('')
   useEffect(() => {
   window.api.getProfiles().then((res) => {
     setExistingProfiles(res.profiles || [])
@@ -1003,7 +1182,9 @@ const handleStartNewAccount = async () => {
   setProfile({
     nativeLanguage: p.native_language,
     targetLanguage: p.target_language,
-    goal: p.goal
+    goal: p.goal,
+    occupation: p.occupation || '',
+    interests: p.interests || ''
   })
   setPlacementResult({ level: p.cefr_level, feedback: '' })
 
@@ -1035,7 +1216,9 @@ const handleStartNewAccount = async () => {
       goal: profile.goal,
       cefrLevel: level,
       feedback: feedback || '',
-      levelSource: source
+      levelSource: source,
+      occupation: profile.occupation,
+      interests: profile.interests,
     })
 
     if (!saveResult.success) {
@@ -1099,9 +1282,41 @@ const handleOpenEditProfile = () => {
     nativeLanguage: profile.nativeLanguage,
     targetLanguage: profile.targetLanguage,
     goal: profile.goal,
-    cefrLevel: placementResult?.level || 'A1'
+    cefrLevel: placementResult?.level || 'A1',
+    occupation: profile.occupation || '',
+    interests: profile.interests || '',
   })
   setShowEditProfile(true)
+}
+
+const handleOpenNotes = async () => {
+  setNotesMsg('')
+  const res = await window.api.getLearnerNotes({ profileId })
+  setNotesForm({ notes: res.notes || '', enabled: res.enabled !== false })
+  refreshDailyStats()
+  setShowNotes(true)
+}
+
+const handleSaveNotes = async () => {
+  setNotesBusy(true)
+  await window.api.saveLearnerNotes({ profileId, notes: notesForm.notes, enabled: notesForm.enabled })
+  setNotesBusy(false)
+  setShowNotes(false)
+}
+
+const handleRefreshNotes = async () => {
+  setNotesBusy(true)
+  setNotesMsg('')
+  // lưu bản đang sửa trước để AI cập nhật dựa trên đúng nội dung người học thấy
+  await window.api.saveLearnerNotes({ profileId, notes: notesForm.notes, enabled: notesForm.enabled })
+  const res = await window.api.refreshLearnerNotes({ profileId })
+  setNotesBusy(false)
+  if (res.success && res.updated) {
+    setNotesForm((f) => ({ ...f, notes: res.notes }))
+    setNotesMsg('Đã cập nhật ghi chú.')
+  } else {
+    setNotesMsg('Chưa cập nhật được (cần có tin nhắn, hoặc AI đang bận).')
+  }
 }
 
 const handleSaveEditProfile = async () => {
@@ -1110,7 +1325,9 @@ const handleSaveEditProfile = async () => {
     profileId,
     nativeLanguage: editForm.nativeLanguage,
     targetLanguage: editForm.targetLanguage,
-    goal: editForm.goal
+    goal: editForm.goal,
+    occupation: editForm.occupation,
+    interests: editForm.interests,
   })
   if (res.success) {
     const { cefrLevel, ...rest } = editForm
@@ -1134,7 +1351,12 @@ const refreshMistakes = async () => {
 const refreshDailyStats = async () => {
   if (!profileId) return
   const res = await window.api.getDailyStats({ profileId })
-  setDailyStats({ messagesToday: res.messagesToday || 0, streak: res.streak || 0 })
+    setDailyStats({
+    messagesToday: res.messagesToday || 0,
+    streak: res.streak || 0,
+    totalMessages: res.totalMessages || 0,
+    familiarity: res.familiarity || null
+  })
 }
 
 useEffect(() => {
@@ -1227,7 +1449,7 @@ const handleSendMessage = async () => {
 const handleLogout = () => {
   setStep(0)
   setProfileId(null)
-  setProfile({ nativeLanguage: '', targetLanguage: '', goal: '' })
+  setProfile({ nativeLanguage: '', targetLanguage: '', goal: '', occupation: '', interests: '' })
   setPlacementResult(null)
   setChatHistory([])
   setMistakes([])
@@ -1242,6 +1464,7 @@ const handleLogout = () => {
   setLevelMode('test')
   setManualLevel('')
   setPlacementError('')
+  setShowNotes(false)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -1360,12 +1583,17 @@ if (step === 2) {
 
 if (step === 3) {
   return (
-    <StepCard key={3} current={3} title="Mục tiêu học của bạn là gì?">
+    <StepCard key={3} current={3} title="Mục tiêu học của bạn là gì?" subtitle="Thông tin thêm giúp AI chọn ví dụ và từ vựng đúng lĩnh vực của bạn.">
       <Dropdown
         value={profile.goal}
         options={goalOptions}
         onChange={(v) => handleChange('goal', v)}
         placeholder="Chọn mục tiêu"
+      />
+      <ProfileExtras
+        occupation={profile.occupation}
+        interests={profile.interests}
+        onChange={handleChange}
       />
       <div style={onboardStyles.actions}>
         <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
@@ -1517,6 +1745,11 @@ if (showEditProfile) {
           onChange={(v) => setEditForm({ ...editForm, goal: v })}
         />
       </Field>
+       <ProfileExtras
+        occupation={editForm.occupation}
+        interests={editForm.interests}
+        onChange={(field, value) => setEditForm({ ...editForm, [field]: value })}
+      />
       <Field label="Trình độ">
         <Dropdown
           up
@@ -1624,6 +1857,86 @@ return (
         </div>
       </div>
     )}
+
+            {showNotes && (
+      <div style={settingsStyles.overlay} onClick={() => setShowNotes(false)}>
+        <div style={{ ...settingsStyles.modal, width: '480px', padding: 0 }} onClick={(e) => e.stopPropagation()}>
+          <div style={notesStyles.header}>
+            <div style={notesStyles.headIcon}>
+              <Icon name="sparkle" size={20} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={notesStyles.title}>AI biết gì về bạn</div>
+              <div style={notesStyles.subtitle}>Những điều AI nhớ để trò chuyện sát với bạn hơn</div>
+            </div>
+            <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setShowNotes(false)}>
+              <Icon name="close" />
+            </button>
+          </div>
+
+          <div style={notesStyles.body}>
+            <div style={notesStyles.toggleCard}>
+              <div style={rowStyles.textCol}>
+                <div style={rowStyles.title}>Cho phép AI ghi nhớ</div>
+                <div style={rowStyles.desc}>Tắt thì AI không tạo và không dùng ghi chú khi trò chuyện</div>
+              </div>
+              <ToggleSwitch checked={notesForm.enabled} onChange={(v) => setNotesForm({ ...notesForm, enabled: v })} />
+            </div>
+
+            <div>
+              <div style={notesStyles.labelRow}>
+                <span style={notesStyles.label}>Ghi chú của AI</span>
+                <div style={notesStyles.actions}>
+                  <button
+                    style={{ ...notesStyles.smallAction, ...(notesBusy || !notesForm.notes ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}
+                    onClick={() => setNotesForm({ ...notesForm, notes: '' })}
+                    disabled={notesBusy || !notesForm.notes}
+                  >
+                    <Icon name="trash" size={12} /> Xoá hết
+                  </button>
+                  <button
+                    style={{ ...notesStyles.smallAction, ...(notesBusy || !notesForm.enabled ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}
+                    onClick={handleRefreshNotes}
+                    disabled={notesBusy || !notesForm.enabled}
+                  >
+                    <Icon name="repeat" size={12} /> {notesBusy ? 'Đang xử lý...' : 'Cập nhật ngay'}
+                  </button>
+                </div>
+              </div>
+
+              <textarea
+                style={{ ...notesStyles.textarea, ...(!notesForm.enabled ? { opacity: 0.55 } : {}) }}
+                maxLength={600}
+                value={notesForm.notes}
+                onChange={(e) => setNotesForm({ ...notesForm, notes: e.target.value })}
+                placeholder="Chưa có ghi chú. AI sẽ tự cập nhật sau mỗi khoảng 10 tin nhắn, hoặc bạn có thể tự viết ở đây."
+                disabled={!notesForm.enabled || notesBusy}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '8px' }}>
+                <span style={notesStyles.hint}>
+                  {notesMsg || 'Bạn có thể sửa hoặc xoá bất cứ lúc nào. Ghi chú được lưu trên máy này.'}
+                </span>
+                <span style={{ ...notesStyles.hint, flexShrink: 0 }}>{notesForm.notes.length}/600</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={notesStyles.footer}>
+            <button style={notesStyles.ghostBtn} onClick={() => setShowNotes(false)} disabled={notesBusy}>
+              Huỷ
+            </button>
+            <button
+              style={{ ...notesStyles.primaryBtn, ...(notesBusy ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
+              onClick={handleSaveNotes}
+              disabled={notesBusy}
+            >
+              Lưu
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Sidebar trái */}
         <aside className="sidebar" style={styles.sidebarV2}>
       <button style={styles.newChatButton} onClick={handleNewConversation}>
@@ -1640,6 +1953,9 @@ return (
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => setShowVocab(true)}>
           <Icon name="cards" size={17} /> Từ vựng
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={handleOpenNotes}>
+          <Icon name="user" size={17} /> AI biết gì về bạn
         </button>
       </nav>
 
@@ -1827,7 +2143,7 @@ return (
     {/* Panel thống kê phải */}
     <aside className="right-panel" style={styles.rightPanel}>
       <h3 style={{ margin: 0, fontSize: fs(16), fontWeight: '700' }}>Thống kê của bạn</h3>
-            <div style={styles.statCard}>
+      <div style={styles.statCard}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
           <Icon name="flame" size={18} />
           <span style={{ fontSize: fs(18), fontWeight: '700' }}>{dailyStats.streak}</span>

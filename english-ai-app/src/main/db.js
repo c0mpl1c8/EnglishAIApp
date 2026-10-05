@@ -28,6 +28,11 @@ db.exec(`
 `)
 addColumnIfMissing('profile', 'username', 'TEXT')
 addColumnIfMissing('profile', 'level_source', 'TEXT')
+addColumnIfMissing('profile', 'occupation', 'TEXT')
+addColumnIfMissing('profile', 'interests', 'TEXT')
+addColumnIfMissing('profile', 'learner_notes', 'TEXT')
+addColumnIfMissing('profile', 'notes_at_count', 'INTEGER DEFAULT 0')
+addColumnIfMissing('profile', 'notes_enabled', 'INTEGER DEFAULT 1')
 
 // ===== level_history =====
 db.exec(`
