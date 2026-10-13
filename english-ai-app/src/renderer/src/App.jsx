@@ -537,6 +537,137 @@ const notesStyles = {
   }
 }
 
+const hubStyles = {
+  card: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '14px',
+    padding: '16px',
+    borderRadius: '14px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface-soft)',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  icon: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '12px',
+    background: 'var(--accent-soft)',
+    color: 'var(--accent-text)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  text: { display: 'flex', flexDirection: 'column', gap: '3px', flex: 1, minWidth: 0 },
+  title: { fontSize: fs(15), fontWeight: '700' },
+  desc: { fontSize: fs(12), color: 'var(--text-muted)', lineHeight: 1.4 }
+}
+
+const quizStyles = {
+  option: {
+    width: '100%',
+    padding: '12px 14px',
+    borderRadius: '12px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(15),
+    cursor: 'pointer',
+    textAlign: 'left',
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box'
+  },
+    modeRow: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '10px 12px',
+    borderRadius: '12px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface-soft)',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  modeRowActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
+  modeIcon: {
+    width: '34px',
+    height: '34px',
+    borderRadius: '10px',
+    background: 'var(--surface)',
+    color: 'var(--accent-text)',
+    border: '1px solid var(--border-soft)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0
+  },
+  radio: {
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    border: '1.5px solid var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    color: '#ffffff'
+  },
+  radioOn: { background: 'var(--accent)', borderColor: 'var(--accent)' },
+  chip: {
+    padding: '7px 12px',
+    borderRadius: '999px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface-soft)',
+    color: 'var(--text-soft)',
+    fontSize: fs(13),
+    cursor: 'pointer'
+  },
+  chipOn: { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#ffffff' },
+  primary: {
+    padding: '11px 26px',
+    borderRadius: '999px',
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    fontSize: fs(15),
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px'
+  },
+  ghost: {
+    padding: '11px 16px',
+    borderRadius: '999px',
+    border: 'none',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    fontSize: fs(14),
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  letter: { fontWeight: '700', color: 'var(--text-muted)', minWidth: '18px' },
+  correct: { borderColor: '#27ae60', background: 'rgba(39,174,96,0.12)' },
+  wrong: { borderColor: '#c0392b', background: 'rgba(192,57,43,0.12)' },
+  dim: { opacity: 0.55 },
+  chipActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)', color: 'var(--accent-text)' },
+  disabled: { opacity: 0.45, cursor: 'not-allowed' }
+}
+
+
 function Dropdown({ value, options, onChange, placeholder = 'Chọn...', up = false }) {
   const [open, setOpen] = useState(false)
   const hasValue = options.some((o) => o.value === value)
@@ -932,6 +1063,367 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
         )}
       </div>
     </>
+  )
+}
+
+const quizPresetTopics = ['Thì động từ', 'Giới từ', 'Mạo từ (a/an/the)', 'Câu điều kiện', 'Từ vựng hằng ngày', 'Cụm động từ']
+const quizCss = `
+  .qrow { transition: border-color 120ms ease, background 120ms ease; }
+  .qrow:not(:disabled):hover { border-color: var(--accent) !important; }
+  .qchip { transition: background 120ms ease, border-color 120ms ease; }
+  .qchip:hover { border-color: var(--accent) !important; }
+  .qprimary { transition: filter 120ms ease; }
+  .qprimary:hover { filter: brightness(1.08); }
+  .qghost:hover { color: var(--text) !important; }
+`
+function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
+  const [selected, setSelected] = useState('random')
+  const [custom, setCustom] = useState('')
+  const [count, setCount] = useState(5)
+  const hasInfo = !!((profile.occupation || '').trim() || (profile.interests || '').trim())
+  const usingCustom = !!custom.trim()
+
+  const start = () => {
+    if (usingCustom) return onStart({ topic: { type: 'custom', value: custom.trim() }, label: custom.trim(), count })
+    if (selected === 'random') return onStart({ topic: { type: 'random' }, label: 'Ngẫu nhiên', count })
+    if (selected === 'mistakes') return onStart({ topic: { type: 'mistakes' }, label: 'Từ lỗi của bạn', count })
+    if (selected === 'job') return onStart({ topic: { type: 'job' }, label: 'Theo nghề/sở thích của bạn', count })
+    return onStart({ topic: { type: 'preset', value: selected }, label: selected, count })
+  }
+
+  const modes = [
+    { id: 'random', icon: 'cards', title: 'Ngẫu nhiên', desc: 'Đa dạng ngữ pháp và từ vựng', ok: true },
+    {
+      id: 'mistakes',
+      icon: 'warning',
+      title: 'Từ lỗi của tôi',
+      desc: mistakeCount ? 'Dựa trên loại lỗi bạn hay mắc' : 'Chưa có lỗi nào được ghi nhận',
+      ok: mistakeCount > 0
+    },
+    {
+      id: 'job',
+      icon: 'user',
+      title: 'Theo nghề / sở thích',
+      desc: hasInfo ? 'Từ vựng và tình huống thuộc lĩnh vực của bạn' : 'Điền nghề/sở thích ở "Chỉnh sửa thông tin"',
+      ok: hasInfo
+    }
+  ]
+
+  return (
+    <StepCard title="Bài tập trắc nghiệm" subtitle="Chọn kiểu bài bạn muốn AI soạn.">
+      <style>{quizCss}</style>
+
+      <Field label="Kiểu bài tập">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {modes.map((m) => {
+            const active = !usingCustom && selected === m.id
+            return (
+              <button
+                key={m.id}
+                className="qrow"
+                disabled={!m.ok}
+                style={{
+                  ...quizStyles.modeRow,
+                  ...(active ? quizStyles.modeRowActive : {}),
+                  ...(!m.ok ? { opacity: 0.55, cursor: 'not-allowed' } : {})
+                }}
+                onClick={() => {
+                  setSelected(m.id)
+                  setCustom('')
+                }}
+              >
+                <span style={quizStyles.modeIcon}><Icon name={m.icon} size={16} /></span>
+                <span style={hubStyles.text}>
+                  <span style={{ ...hubStyles.title, fontSize: fs(14) }}>{m.title}</span>
+                  <span style={hubStyles.desc}>{m.desc}</span>
+                </span>
+                <span style={{ ...quizStyles.radio, ...(active ? quizStyles.radioOn : {}) }}>
+                  {active && <Icon name="check" size={12} />}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+
+      <Field label="Hoặc chọn chủ đề cụ thể">
+        <div style={onboardStyles.chips}>
+          {quizPresetTopics.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="qchip"
+              style={{ ...quizStyles.chip, ...(!usingCustom && selected === t ? quizStyles.chipOn : {}) }}
+              onClick={() => {
+                setSelected(t)
+                setCustom('')
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <input
+          style={{ ...onboardStyles.fieldInput, marginTop: '10px', ...(usingCustom ? { borderColor: 'var(--accent)' } : {}) }}
+          maxLength={80}
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder="Hoặc tự nhập chủ đề, ví dụ: đặt phòng khách sạn"
+        />
+      </Field>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+        <span style={{ ...onboardStyles.fieldLabel, marginBottom: 0 }}>Số câu</span>
+        <SegmentedControl
+          value={count}
+          onChange={setCount}
+          options={[
+            { value: 5, label: '5 câu' },
+            { value: 10, label: '10 câu' }
+          ]}
+        />
+      </div>
+
+      <div style={{ ...onboardStyles.actions, marginTop: '8px' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onBack}>
+          <Icon name="back" size={16} /> Quay lại
+        </button>
+        <button className="qprimary" style={quizStyles.primary} onClick={start}>
+          Bắt đầu <Icon name="next" size={16} />
+        </button>
+      </div>
+    </StepCard>
+  )
+}
+
+function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit }) {
+  // loading | question | answered | done | error
+  const [phase, setPhase] = useState('loading')
+  const [questions, setQuestions] = useState([])
+  const [index, setIndex] = useState(0)
+  const [picked, setPicked] = useState(null)
+  const [score, setScore] = useState(0)
+  const [errMsg, setErrMsg] = useState('')
+
+  const load = async () => {
+    setPhase('loading')
+    setErrMsg('')
+    const res = await window.api.generateQuiz({
+      profileId,
+      targetLanguage: profile.targetLanguage,
+      nativeLanguage: profile.nativeLanguage,
+      cefrLevel,
+      topic,
+      count
+    })
+    if (res.success && res.questions.length > 0) {
+      setQuestions(res.questions)
+      setIndex(0)
+      setPicked(null)
+      setScore(0)
+      setPhase('question')
+    } else {
+      setErrMsg(res.message || 'Không tạo được bộ câu hỏi.')
+      setPhase('error')
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const choose = (i) => {
+    if (phase !== 'question') return
+    setPicked(i)
+    if (i === questions[index].answer) setScore((s) => s + 1)
+    setPhase('answered')
+  }
+
+  const next = () => {
+    if (index + 1 >= questions.length) {
+      setPhase('done')
+      return
+    }
+    setIndex(index + 1)
+    setPicked(null)
+    setPhase('question')
+  }
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loading') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Đang soạn câu hỏi...</h2>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>Chủ đề: {label}. Có thể mất vài giây.</p>
+      </>
+    )
+  }
+
+  if (phase === 'error') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa tạo được bộ câu hỏi</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>{errMsg}</p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button style={styles.backButton} onClick={onExit}>Quay lại</button>
+          <button style={styles.button} onClick={load}>Thử lại</button>
+        </div>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    const pct = Math.round((score / questions.length) * 100)
+    const msg = pct >= 80 ? 'Rất tốt!' : pct >= 50 ? 'Khá ổn, luyện thêm một chút nhé.' : 'Chưa vững, hãy xem lại phần giải thích và thử bộ mới.'
+    return wrap(
+      <>
+        <h2 style={styles.question}>Kết quả</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{msg}</p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button style={styles.backButton} onClick={onExit}>Quay lại</button>
+          <button style={styles.button} onClick={load}>Bộ câu hỏi mới</button>
+        </div>
+      </>
+    )
+  }
+
+  const q = questions[index]
+  const answered = phase === 'answered'
+  const letters = ['A', 'B', 'C', 'D', 'E']
+
+  return wrap(
+    <>
+      <ProgressDots current={index + 1} total={questions.length} />
+      <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
+        Câu {index + 1}/{questions.length} · {label}
+      </p>
+
+      <div style={practiceStyles.card}>
+        <div style={practiceStyles.sentence}>{q.question}</div>
+      </div>
+
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {q.options.map((o, i) => {
+          const isCorrect = i === q.answer
+          const isPicked = i === picked
+          const extra = !answered ? {} : isCorrect ? quizStyles.correct : isPicked ? quizStyles.wrong : quizStyles.dim
+          return (
+            <button
+              key={i}
+              style={{ ...quizStyles.option, ...extra, ...(answered ? { cursor: 'default' } : {}) }}
+              onClick={() => choose(i)}
+              disabled={answered}
+            >
+              <span style={quizStyles.letter}>{letters[i]}</span>
+              <span style={{ flex: 1 }}>{o}</span>
+              {answered && isCorrect && <Icon name="check" size={16} />}
+              {answered && isPicked && !isCorrect && <Icon name="close" size={16} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {answered && (
+        <div style={{ ...practiceStyles.feedback, ...(picked === q.answer ? practiceStyles.ok : practiceStyles.bad) }}>
+          <div style={{ fontWeight: '700' }}>{picked === q.answer ? 'Chính xác!' : `Đáp án đúng: ${q.options[q.answer]}`}</div>
+          {q.explanation && <div style={{ marginTop: '6px', fontSize: fs(13) }}>{q.explanation}</div>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+        {answered && (
+          <button style={styles.button} onClick={next}>
+            {index + 1 >= questions.length ? 'Xem kết quả' : 'Câu tiếp theo'}
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRefresh, onExit }) {
+  const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz
+  const [quiz, setQuiz] = useState(null)
+
+  if (mode === 'mistakes') {
+    return (
+      <PracticeScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={cefrLevel}
+        onExit={() => {
+          onRefresh()
+          setMode('hub')
+        }}
+      />
+    )
+  }
+
+  if (mode === 'setup') {
+    return (
+      <QuizSetup
+        profile={profile}
+        mistakeCount={mistakeCount}
+        onBack={() => setMode('hub')}
+        onStart={(cfg) => {
+          setQuiz(cfg)
+          setMode('quiz')
+        }}
+      />
+    )
+  }
+
+  if (mode === 'quiz' && quiz) {
+    return (
+      <QuizScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={cefrLevel}
+        topic={quiz.topic}
+        label={quiz.label}
+        count={quiz.count}
+        onExit={() => setMode('setup')}
+      />
+    )
+  }
+
+  return (
+    <StepCard title="Ôn tập" subtitle="Chọn cách bạn muốn luyện hôm nay.">
+      <style>{dropdownCss}</style>
+
+      <button className="level-card" style={hubStyles.card} onClick={() => setMode('mistakes')}>
+        <span style={hubStyles.icon}><Icon name="repeat" size={20} /></span>
+        <span style={hubStyles.text}>
+          <span style={hubStyles.title}>Ôn lỗi cũ</span>
+          <span style={hubStyles.desc}>AI đưa lại những lỗi bạn từng mắc theo lịch giãn cách</span>
+        </span>
+        {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
+      </button>
+
+      <button className="level-card" style={hubStyles.card} onClick={() => setMode('setup')}>
+        <span style={hubStyles.icon}><Icon name="check" size={20} /></span>
+        <span style={hubStyles.text}>
+          <span style={hubStyles.title}>Bài tập trắc nghiệm</span>
+          <span style={hubStyles.desc}>AI tạo câu hỏi theo chủ đề bạn chọn hoặc ngẫu nhiên</span>
+        </span>
+      </button>
+
+      <div style={onboardStyles.actions}>
+        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+          <Icon name="back" size={16} /> Quay lại luyện tập
+        </button>
+      </div>
+    </StepCard>
   )
 }
 
@@ -1793,10 +2285,13 @@ if (showVocab) {
 
 if (showPractice) {
   return (
-    <PracticeScreen
+    <ReviewHub
       profileId={profileId}
       profile={profile}
       cefrLevel={placementResult?.level || 'A1'}
+      dueCount={dueCount}
+      mistakeCount={mistakes.length}
+      onRefresh={refreshMistakes}
       onExit={() => {
         setShowPractice(false)
         refreshMistakes()

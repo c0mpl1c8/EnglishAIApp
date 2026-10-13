@@ -3,7 +3,7 @@ import { join } from 'path'
 import {appendFileSync} from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-
+import { GoogleGenAI } from '@google/genai'
 import { config } from 'dotenv'
 import db from './db.js'
 
@@ -23,58 +23,81 @@ function logError(label, error) {
   }
 }
 
-logError('startup', `LLM_URL loaded = ${!!process.env.LLM_URL}, LLM_KEY loaded = ${!!process.env.LLM_KEY}`)
+logError('startup', `provider = ${process.env.AI_PROVIDER || 'vllm'}, VLLM_URL loaded = ${!!process.env.VLLM_URL}, LLM_KEY loaded = ${!!process.env.LLM_KEY}`)
 
-const LLM_URL = process.env.LLM_URL
+const PROVIDER = (process.env.AI_PROVIDER || 'vllm').toLowerCase()
+
+// vLLM của trường (giao thức giống OpenAI)
+const VLLM_URL = process.env.VLLM_URL
+const VLLM_MODEL = process.env.VLLM_MODEL || 'qwen3.5-35b-a3b-int4'
 const LLM_KEY = process.env.LLM_KEY
-const LLM_MODEL = process.env.LLM_MODEL || 'qwen2.5:14b-instruct-ctx16k'
 
-// Đổi định dạng "contents" (kiểu Gemini) thành một chuỗi prompt cho Ollama
-function toPrompt(contents) {
-  if (typeof contents === 'string') return contents
-  const turns = contents.map((c) => {
+// Gemini (dự phòng)
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
+const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null
+
+console.log('AI provider:', PROVIDER)
+
+// Đổi "contents" (kiểu Gemini) sang "messages" (kiểu OpenAI), gộp các lượt liền nhau cùng vai
+function toMessages(contents) {
+  if (typeof contents === 'string') return [{ role: 'user', content: contents }]
+  const msgs = []
+  for (const c of contents) {
+    const role = c.role === 'model' ? 'assistant' : 'user'
     const text = c.parts.map((p) => p.text).join('')
-    return `${c.role === 'model' ? 'ASSISTANT' : 'USER'}: ${text}`
-  })
-  return turns.join('\n\n') + '\n\nASSISTANT:'
+    const last = msgs[msgs.length - 1]
+    if (last && last.role === role) last.content += '\n\n' + text
+    else msgs.push({ role, content: text })
+  }
+  return msgs
 }
 
-async function generateWithRetry(params, maxRetries = 2) {
-    if (!LLM_URL || !LLM_KEY) {
-    const err = new Error('Thiếu LLM_URL hoặc LLM_KEY trong .env')
+async function generateWithVllm(params, maxRetries = 2) {
+  if (!VLLM_URL || !LLM_KEY) {
+    const err = new Error('Thiếu VLLM_URL hoặc LLM_KEY trong .env')
     logError('llm-config', err)
     throw err
   }
   const body = {
-    model: LLM_MODEL,
-    prompt: toPrompt(params.contents),
-    stream: false, // nhận một lần, không nhận từng mảnh
-    options: { temperature: 0.4 }
+    model: VLLM_MODEL,
+    messages: toMessages(params.contents),
+    stream: false,
+    temperature: 0.4,
+    max_tokens: 1500,
+    chat_template_kwargs: { enable_thinking: false } // tắt chế độ "suy nghĩ" để trả lời nhanh, gọn
   }
-  if (params.json !== false) body.format = 'json' // ép trả JSON hợp lệ
+  if (params.json !== false) body.response_format = { type: 'json_object' }
 
   for (let i = 0; i <= maxRetries; i++) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 120000) // tối đa 2 phút
+    const timer = setTimeout(() => controller.abort(), 120000)
     try {
-      const res = await fetch(LLM_URL, {
+      const res = await fetch(VLLM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-ollama-seckey': LLM_KEY },
         body: JSON.stringify(body),
         signal: controller.signal
       })
       if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`)
+        const detail = await res.text().catch(() => '')
+        // Nếu server không hỗ trợ response_format thì bỏ đi và thử lại một lần
+        if (res.status === 400 && body.response_format) {
+          delete body.response_format
+          i--
+          continue
+        }
+        const err = new Error(`HTTP ${res.status} ${detail.slice(0, 200)}`)
         err.status = res.status
         throw err
       }
       const data = await res.json()
-      return { text: data.response || '' }
+      let text = data?.choices?.[0]?.message?.content || ''
+      text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim() // phòng khi model vẫn in phần suy nghĩ
+      return { text }
     } catch (error) {
-      // Thử lại khi mạng lỗi/quá tải; lỗi 4xx (sai key, sai model) thì dừng ngay
       const retryable = !error.status || [502, 503, 504].includes(error.status)
       console.error(`LLM error (lần ${i + 1}):`, error.message)
-      logError('llm', error)
+      logError('llm-vllm', error)
       if (retryable && i < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** i))
         continue
@@ -84,6 +107,33 @@ async function generateWithRetry(params, maxRetries = 2) {
       clearTimeout(timer)
     }
   }
+}
+
+async function generateWithGemini(params, maxRetries = 4) {
+  if (!ai) {
+    const err = new Error('Thiếu GEMINI_API_KEY trong .env')
+    logError('llm-config', err)
+    throw err
+  }
+  const config = params.json !== false ? { responseMimeType: 'application/json' } : undefined
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      return await ai.models.generateContent({ model: GEMINI_MODEL, contents: params.contents, config })
+    } catch (error) {
+      const msg = String(error?.message || '')
+      const overloaded = error?.status === 503 || msg.includes('503') || msg.includes('UNAVAILABLE')
+      logError('llm-gemini', error)
+      if (overloaded && i < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * 2 ** i))
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+async function generateWithRetry(params) {
+  return PROVIDER === 'gemini' ? generateWithGemini(params) : generateWithVllm(params)
 }
 
 const REVIEW_LADDER = [0, 3, 7, 14]
@@ -139,6 +189,15 @@ function normalizeAnswer(s) {
     .replace(/[^\p{L}\p{N}\s]/gu, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function shuffle(arr) {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
 }
 
 const cleanText = (v, max) =>
@@ -310,9 +369,12 @@ Trả lời CHỈ bằng JSON theo format: {"level": "A1/A2/B1/B2/C1/C2", "feedb
       })
 
       const text = response.text.replace(/```json|```/g, '').trim()
-      return JSON.parse(text)
+      const parsed = JSON.parse(text)
+      const level = String(parsed.level || '').trim().toUpperCase()
+      return { level: LEVELS.includes(level) ? level : 'unknown', feedback: String(parsed.feedback || '') }
     } catch (error) {
-      console.error('Gemini error:', error)
+      console.error('AI error:', error)
+      logError('placement', error)
       return { level: 'unknown', feedback: 'Có lỗi xảy ra, thử lại sau.' }
     }
   })
@@ -715,6 +777,96 @@ Trả lời CHỈ bằng một mảng JSON, cùng thứ tự với danh sách: [
   })
 
   // ===== Spaced repetition =====
+
+  ipcMain.handle('generate-quiz', async (event, { profileId, targetLanguage, nativeLanguage, cefrLevel, topic, count }) => {
+    try {
+      const n = Math.min(10, Math.max(3, parseInt(count, 10) || 5))
+      const p = getProfile(cefrLevel)
+      const type = topic?.type || 'random'
+
+      const randomFocus =
+        'Chủ đề ngẫu nhiên: trộn đều ngữ pháp (thì, giới từ, mạo từ, câu điều kiện...), từ vựng và cụm từ thông dụng.'
+      let focus = ''
+
+      if (type === 'custom') {
+        focus = `Chủ đề do học viên chọn: "${cleanText(topic.value, 80)}". Mọi câu hỏi phải xoay quanh chủ đề này (từ vựng, cấu trúc và tình huống liên quan).`
+      } else if (type === 'preset') {
+        focus = `Trọng tâm: "${cleanText(topic.value, 60)}".`
+      } else if (type === 'mistakes') {
+        const cats = db.prepare(`
+          SELECT category, COUNT(*) AS c FROM mistakes
+          WHERE profile_id = ? GROUP BY category ORDER BY c DESC LIMIT 3
+        `).all(profileId)
+        if (cats.length > 0) {
+          const lines = cats.map((c) => {
+            const ex = db.prepare(`
+              SELECT corrected_text FROM mistakes WHERE profile_id = ? AND category = ? ORDER BY id DESC LIMIT 2
+            `).all(profileId, c.category).map((r) => `"${cleanText(r.corrected_text, 100)}"`).join(', ')
+            return `- ${cleanText(c.category, 60)} (ví dụ câu đúng: ${ex})`
+          })
+          focus = `Học viên hay mắc các loại lỗi sau, hãy tập trung kiểm tra đúng các điểm này:\n${lines.join('\n')}`
+        } else {
+          focus = randomFocus
+        }
+      } else if (type === 'job') {
+        const info = getLearnerLine(profileId)
+        focus = info
+          ? `Tạo câu hỏi với từ vựng và tình huống thuộc lĩnh vực/sở thích của học viên theo thông tin dưới đây.${info}`
+          : randomFocus
+      } else {
+        focus = randomFocus
+      }
+
+      const response = await generateWithRetry({
+        maxTokens: 2500,
+        contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo ${n} câu hỏi trắc nghiệm cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
+${focus}
+
+Quy tắc:
+- Câu hỏi và các lựa chọn viết bằng ${targetLanguage}, độ khó phù hợp: ${p.style}
+- Mỗi câu có đúng 4 lựa chọn, CHỈ MỘT lựa chọn đúng; 3 lựa chọn sai phải hợp lý (là lỗi người học hay mắc), không quá vô lý.
+- Đa dạng dạng câu: điền vào chỗ trống (dùng ___), chọn câu đúng ngữ pháp, chọn từ phù hợp nghĩa.
+- Không trùng ý giữa các câu.
+- "answer" phải là CHÍNH XÁC nội dung của lựa chọn đúng (sao chép nguyên văn từ "options").
+- "explanation": 1-2 câu ngắn bằng ${nativeLanguage}, giải thích vì sao đáp án đúng.
+Trả lời CHỈ bằng JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","explanation":"..."}]}`
+      })
+
+      const parsed = JSON.parse(response.text.replace(/```json|```/g, '').trim())
+      const raw = Array.isArray(parsed) ? parsed : parsed.questions
+
+      const questions = []
+      for (const q of raw || []) {
+        const options = Array.isArray(q?.options)
+          ? q.options.map((o) => String(o ?? '').trim()).filter(Boolean)
+          : []
+        if (!q?.question || options.length < 3) continue
+        if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) continue
+
+        // Tìm đáp án đúng theo nội dung; nếu model đưa số thứ tự (bắt đầu từ 0) thì dùng làm dự phòng
+        const ansText = String(q.answer ?? '').trim().toLowerCase()
+        let idx = options.findIndex((o) => o.toLowerCase() === ansText)
+        if (idx < 0 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < options.length) idx = q.answer
+        if (idx < 0) continue
+
+        const correctText = options[idx]
+        const mixed = shuffle(options) // xáo trộn để đáp án đúng không dồn về một vị trí
+        questions.push({
+          question: String(q.question).trim(),
+          options: mixed,
+          answer: mixed.indexOf(correctText),
+          explanation: String(q.explanation ?? '').trim()
+        })
+      }
+
+      if (questions.length < 3) throw new Error('Quiz: không đủ câu hỏi hợp lệ')
+      return { success: true, questions: questions.slice(0, n) }
+    } catch (error) {
+      console.error('Quiz error:', error)
+      logError('quiz', error)
+      return { success: false, questions: [], message: 'AI chưa tạo được bộ câu hỏi. Bạn thử lại hoặc chọn ít câu hơn nhé.' }
+    }
+  })
 
   ipcMain.handle('get-due-mistakes', async (event, { profileId }) => {
     try {

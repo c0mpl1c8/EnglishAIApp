@@ -24,6 +24,7 @@ const api = {
   getLearnerNotes: (data) => ipcRenderer.invoke('get-learner-notes', data),
   saveLearnerNotes: (data) => ipcRenderer.invoke('save-learner-notes', data),
   refreshLearnerNotes: (data) => ipcRenderer.invoke('refresh-learner-notes', data),
+  generateQuiz: (data) => ipcRenderer.invoke('generate-quiz', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to
