@@ -60,6 +60,7 @@ db.exec(`
 `)
 addColumnIfMissing('mistakes', 'next_review_at', 'TEXT')
 addColumnIfMissing('mistakes', 'interval_days', 'INTEGER DEFAULT 0')
+addColumnIfMissing('mistakes', 'skill', 'TEXT')
 
 // ===== chat_messages =====
 db.exec(`
@@ -96,5 +97,14 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
-
+db.exec(`
+  CREATE TABLE IF NOT EXISTS skill_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    skill TEXT,
+    correct INTEGER,
+    source TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 export default db

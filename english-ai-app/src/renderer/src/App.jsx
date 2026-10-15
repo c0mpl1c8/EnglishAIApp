@@ -90,6 +90,7 @@ const iconPaths = {
   minus: ['M5 12h14'],
   chevron: ['m6 9 6 6 6-6'],
   sparkle: ['M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z'],
+  trend: ['m22 7-8.5 8.5-5-5L2 17', 'M16 7h6v6'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
   edit: ['M12 20h9', 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z'],
@@ -209,7 +210,9 @@ const scrollbarStyle = `
     display: none; /* bỏ mũi tên trên/dưới */
   }
 `
-
+const buttonCss = `
+  button:disabled:not(.quiz-opt) { opacity: 0.5; cursor: not-allowed; }
+`
 const loginCss = `
   .account-row { transition: background 120ms ease; }
   .account-row:hover { background: var(--surface-soft); }
@@ -659,6 +662,31 @@ const quizStyles = {
     alignItems: 'center',
     gap: '6px'
   },
+  tag: {
+    display: 'inline-block',
+    padding: '3px 10px',
+    borderRadius: '999px',
+    background: 'var(--accent-soft)',
+    color: 'var(--accent-text)',
+    fontSize: fs(11),
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px'
+  },
+  answerInput: {
+    width: '100%',
+    maxWidth: '520px',
+    padding: '14px 18px',
+    borderRadius: '14px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(16),
+    outline: 'none',
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+
   letter: { fontWeight: '700', color: 'var(--text-muted)', minWidth: '18px' },
   correct: { borderColor: '#27ae60', background: 'rgba(39,174,96,0.12)' },
   wrong: { borderColor: '#c0392b', background: 'rgba(192,57,43,0.12)' },
@@ -955,20 +983,21 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
   const wrap = (children) => (
     <div style={styles.container} className="fade-in">
       <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
       {children}
     </div>
   )
 
   if (phase === 'loadingList') return wrap(<p>Đang tải danh sách ôn tập...</p>)
 
-  if (phase === 'empty') {
+   if (phase === 'empty') {
     return wrap(
       <>
         <h2 style={styles.question}>Không có lỗi nào cần ôn</h2>
-        <p style={{ color: 'var(--text-muted)', maxWidth: '380px' }}>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>
           Hôm nay bạn đã ôn hết rồi. Hãy quay lại vào ngày mai, hoặc trò chuyện thêm để AI ghi nhận thêm lỗi nhé.
         </p>
-        <button style={styles.button} onClick={onExit}>Quay lại luyện tập</button>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
       </>
     )
   }
@@ -980,8 +1009,8 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>
           {correctCount}/{queue.length}
         </div>
-        <p style={{ color: 'var(--text-muted)' }}>câu trả lời đúng</p>
-        <button style={styles.button} onClick={onExit}>Quay lại luyện tập</button>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>câu trả lời đúng</p>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
       </>
     )
   }
@@ -993,20 +1022,27 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
       : `Bạn sẽ gặp lại lỗi này sau ${result.nextInterval} ngày.`
     : ''
 
-  return wrap(
+   return wrap(
     <>
       <ProgressDots current={index + 1} total={queue.length} />
-      <h2 style={styles.question}>Ôn tập lỗi cũ</h2>
+      <div>
+        <h2 style={styles.question}>Ôn lỗi cũ</h2>
+        <p style={{ margin: '6px 0 0', fontSize: fs(13), color: 'var(--text-muted)' }}>
+          Câu {index + 1}/{queue.length}
+        </p>
+      </div>
 
       <div style={practiceStyles.card}>
-        <div style={styles.mistakeCategory}>{current.category}</div>
+        <span style={quizStyles.tag}>{current.category}</span>
         {phase === 'loadingQuestion' && <p style={{ margin: '12px 0 0' }}>Đang tạo câu hỏi...</p>}
         {phase === 'error' && (
           <p style={{ margin: '12px 0 0' }}>Không tạo được câu hỏi (có thể AI đang quá tải).</p>
         )}
         {question && phase !== 'loadingQuestion' && phase !== 'error' && (
           <>
-            <p style={{ margin: '10px 0', fontSize: fs(14), color: 'var(--text-soft)' }}>{question.instruction}</p>
+            <p style={{ margin: '12px 0 8px', fontSize: fs(14), color: 'var(--text-soft)', lineHeight: 1.5 }}>
+              {question.instruction}
+            </p>
             <div style={practiceStyles.sentence}>{question.sentence}</div>
           </>
         )}
@@ -1014,7 +1050,8 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
 
       {(phase === 'answering' || phase === 'checking' || phase === 'feedback') && (
         <input
-          style={{ ...styles.input, width: '100%', maxWidth: '520px' }}
+          className="qinput"
+          style={{ ...quizStyles.answerInput, ...(phase !== 'answering' ? { opacity: 0.7 } : {}) }}
           value={answer}
           onChange={(e) => setAnswer(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
@@ -1040,27 +1077,37 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
           <Icon name="back" size={16} /> Thoát
         </button>
 
-        {(phase === 'answering' || phase === 'checking') && (
-          <button style={styles.button} onClick={handleSubmit} disabled={!answer.trim() || phase === 'checking'}>
-            {phase === 'checking' ? 'Đang chấm...' : 'Kiểm tra'}
-          </button>
-        )}
-        {phase === 'feedback' && (
-          <button style={styles.button} onClick={handleNext}>
-            {index + 1 >= queue.length ? 'Xem kết quả' : 'Câu tiếp theo'}
-          </button>
-        )}
-        {phase === 'error' && (
-          <>
-            <button style={styles.button} onClick={() => loadQuestion(current)}>Thử lại</button>
-            <button style={styles.backButton} onClick={handleNext}>Bỏ qua</button>
-          </>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {phase === 'error' && (
+            <>
+              <button className="qghost" style={quizStyles.ghost} onClick={handleNext}>Bỏ qua</button>
+              <button className="qprimary" style={quizStyles.primary} onClick={() => loadQuestion(current)}>Thử lại</button>
+            </>
+          )}
+          {(phase === 'answering' || phase === 'checking') && (
+            <button
+              className="qprimary"
+              style={{
+                ...quizStyles.primary,
+                ...(!answer.trim() || phase === 'checking' ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+              }}
+              onClick={handleSubmit}
+              disabled={!answer.trim() || phase === 'checking'}
+            >
+              {phase === 'checking' ? 'Đang chấm...' : 'Kiểm tra'} <Icon name="check" size={16} />
+            </button>
+          )}
+          {phase === 'feedback' && (
+            <button className="qprimary" style={quizStyles.primary} onClick={handleNext}>
+              {index + 1 >= queue.length ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
+            </button>
+          )}
+        </div>
       </div>
     </>
   )
@@ -1073,8 +1120,9 @@ const quizCss = `
   .qchip { transition: background 120ms ease, border-color 120ms ease; }
   .qchip:hover { border-color: var(--accent) !important; }
   .qprimary { transition: filter 120ms ease; }
-  .qprimary:hover { filter: brightness(1.08); }
+  .qprimary:hover:not(:disabled) { filter: brightness(1.08); }
   .qghost:hover { color: var(--text) !important; }
+  .qinput:focus { border-color: var(--accent) !important; }
 `
 function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   const [selected, setSelected] = useState('random')
@@ -1234,8 +1282,11 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
 
   const choose = (i) => {
     if (phase !== 'question') return
+    const q = questions[index]
+    const ok = i === q.answer
+    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'quiz' })
     setPicked(i)
-    if (i === questions[index].answer) setScore((s) => s + 1)
+    if (ok) setScore((s) => s + 1)
     setPhase('answered')
   }
 
@@ -1252,6 +1303,7 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
   const wrap = (children) => (
     <div style={styles.container} className="fade-in">
       <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
       {children}
     </div>
   )
@@ -1271,8 +1323,8 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
         <h2 style={styles.question}>Chưa tạo được bộ câu hỏi</h2>
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>{errMsg}</p>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button style={styles.backButton} onClick={onExit}>Quay lại</button>
-          <button style={styles.button} onClick={load}>Thử lại</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={load}>Thử lại</button>
         </div>
       </>
     )
@@ -1287,8 +1339,9 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>{msg}</p>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button style={styles.backButton} onClick={onExit}>Quay lại</button>
-          <button style={styles.button} onClick={load}>Bộ câu hỏi mới</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={load}>Bộ câu hỏi mới</button>
+          
         </div>
       </>
     )
@@ -1317,6 +1370,7 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
           return (
             <button
               key={i}
+              className="quiz-opt"
               style={{ ...quizStyles.option, ...extra, ...(answered ? { cursor: 'default' } : {}) }}
               onClick={() => choose(i)}
               disabled={answered}
@@ -1337,13 +1391,13 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
+         <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
           <Icon name="back" size={16} /> Thoát
         </button>
         {answered && (
-          <button style={styles.button} onClick={next}>
-            {index + 1 >= questions.length ? 'Xem kết quả' : 'Câu tiếp theo'}
+          <button className="qprimary" style={quizStyles.primary} onClick={next}>
+            {index + 1 >= questions.length ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
           </button>
         )}
       </div>
@@ -1426,6 +1480,550 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
     </StepCard>
   )
 }
+
+const progressStyles = {
+  stats: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px', width: '100%' },
+  stat: {
+    padding: '12px 14px',
+    borderRadius: '14px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    textAlign: 'left'
+  },
+  statNum: { fontSize: fs(24), fontWeight: '700', color: 'var(--text-strong)', lineHeight: 1.2 },
+  statLabel: { fontSize: fs(12), color: 'var(--text-muted)', marginTop: '2px' },
+  card: {
+    width: '100%',
+    padding: '16px 18px',
+    borderRadius: '16px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    boxShadow: 'var(--shadow)',
+    boxSizing: 'border-box',
+    textAlign: 'left'
+  },
+  cardTitle: { fontSize: fs(14), fontWeight: '700', color: 'var(--text-strong)' },
+  cardSub: { fontSize: fs(12), color: 'var(--text-muted)', marginTop: '3px', lineHeight: 1.5 },
+  bars: { display: 'flex', alignItems: 'flex-end', gap: '6px', marginTop: '12px' },
+  col: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', minWidth: 0 },
+  val: { fontSize: fs(11), color: 'var(--text-soft)', fontWeight: '600' },
+   barArea: {
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    borderBottom: '1px solid var(--border)'
+  },
+  valTop: {
+    fontSize: fs(11),
+    fontWeight: '600',
+    color: 'var(--text-soft)',
+    lineHeight: 1,
+    marginBottom: '3px'
+  },
+  bar: { width: '100%', maxWidth: '34px', borderRadius: '6px 6px 0 0', background: 'var(--accent)', opacity: 0.5 },
+  barLast: { opacity: 1 },
+  lab: { fontSize: fs(11), color: 'var(--text-muted)' },
+  emptyDot: { width: '4px', height: '4px', borderRadius: '50%', background: 'var(--border)', marginBottom: '-2px' },
+  zeroDot: { width: '8px', height: '8px', borderRadius: '50%', background: '#27ae60', marginBottom: '-4px' },
+  barLow: {
+    background: 'var(--accent-soft)',
+    border: '1.5px dashed var(--accent)',
+    borderBottom: 'none',
+    opacity: 0.9
+  },
+  catRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '10px',
+    padding: '8px 0',
+    borderBottom: '1px solid var(--border-soft)',
+    fontSize: fs(13)
+  }
+}
+
+const MIN_SAMPLE = 3 // tuần có ít hơn số tin nhắn này thì coi là chưa đáng tin
+const weekLabel = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
+
+function BarChart({ data, height = 100, labelEvery = 1, showValues = true }) {
+  const max = Math.max(1, ...data.map((d) => d.value ?? 0))
+  const n = data.length
+  return (
+    <div style={progressStyles.bars}>
+      {data.map((d, i) => {
+        const has = d.value !== null && d.value !== undefined
+        const isZero = has && d.value === 0
+        const h = has && !isZero ? Math.max(6, (d.value / max) * height) : 0
+        const isLast = i === n - 1
+        const showLabel = (n - 1 - i) % labelEvery === 0
+        return (
+          <div key={i} style={progressStyles.col} title={d.tip || ''}>
+            <div style={{ ...progressStyles.barArea, height: `${height + 16}px` }}>
+              {showValues && has && <div style={progressStyles.valTop}>{d.value}</div>}
+              {!has && <div style={progressStyles.emptyDot} />}
+              {isZero && <div style={progressStyles.zeroDot} />}
+              {has && !isZero && (
+                <div
+                  style={{
+                    ...progressStyles.bar,
+                    height: `${h}px`,
+                    ...(d.low ? progressStyles.barLow : isLast ? progressStyles.barLast : {})
+                  }}
+                />
+              )}
+            </div>
+            <div style={{ ...progressStyles.lab, whiteSpace: 'nowrap', visibility: showLabel ? 'visible' : 'hidden' }}>
+              {d.label}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Dữ liệu cho biểu đồ "lỗi trên mỗi 10 tin nhắn"
+function rateData(weeks) {
+  return weeks.map((w) => ({
+    label: weekLabel(w),
+    value: w.rate,
+    low: w.messages < MIN_SAMPLE,
+    tip: w.rate === null ? `Tuần ${weekLabel(w)}: không có tin nhắn` : `Tuần ${weekLabel(w)}: ${w.rate} lỗi/10 tin (${w.messages} tin nhắn)`
+  }))
+}
+
+function RateSummary({ weeks }) {
+  const ok = weeks.filter((w) => w.rate !== null && w.messages >= MIN_SAMPLE)
+  let text
+  let color = 'var(--text-muted)'
+  if (ok.length < 2) {
+    text = `Chưa đủ dữ liệu để so sánh: cần ít nhất 2 tuần có từ ${MIN_SAMPLE} tin nhắn trở lên.`
+  } else {
+    const a = ok[ok.length - 1]
+    const b = ok[ok.length - 2]
+    const diff = Math.round((a.rate - b.rate) * 10) / 10
+    const trend = diff < 0 ? `giảm ${Math.abs(diff)}` : diff > 0 ? `tăng ${diff}` : 'không đổi'
+    color = diff < 0 ? '#27ae60' : diff > 0 ? '#c0392b' : 'var(--text-muted)'
+    text = `Tuần ${weekLabel(a)}: ${a.rate} lỗi/10 tin, ${trend} so với tuần ${weekLabel(b)} (${b.rate}).`
+  }
+  const hasLow = weeks.some((w) => w.rate !== null && w.messages < MIN_SAMPLE)
+  return (
+    <>
+      <div style={{ fontSize: fs(12), fontWeight: '600', color, marginTop: '8px', lineHeight: 1.5 }}>{text}</div>
+      {hasLow && (
+        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '2px' }}>
+          Cột nét đứt: tuần có dưới {MIN_SAMPLE} tin nhắn, số liệu chưa đáng tin.
+        </div>
+      )}
+    </>
+  )
+}
+
+const masteryColor = (m) => (m === null ? 'var(--border)' : m >= 70 ? '#27ae60' : m >= 40 ? '#e0a100' : '#c0392b')
+
+function SkillRadar({ skills }) {
+  const cx = 170
+  const cy = 145
+  const R = 88
+  const n = skills.length
+  const pt = (i, v) => {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
+    return [cx + R * v * Math.cos(a), cy + R * v * Math.sin(a)]
+  }
+  const poly = (fn) => skills.map((s, i) => pt(i, fn(s)).join(',')).join(' ')
+
+  return (
+    <svg viewBox="0 0 340 290" width="100%" style={{ maxWidth: '340px', display: 'block', margin: '0 auto' }}>
+      {[0.25, 0.5, 0.75, 1].map((r) => (
+        <polygon key={r} points={poly(() => r)} style={{ fill: 'none', stroke: 'var(--border)', strokeWidth: 1 }} />
+      ))}
+      {skills.map((s, i) => {
+        const [x, y] = pt(i, 1)
+        return <line key={s.id} x1={cx} y1={cy} x2={x} y2={y} style={{ stroke: 'var(--border-soft)', strokeWidth: 1 }} />
+      })}
+      <polygon
+        points={poly((s) => (s.mastery ?? 0) / 100)}
+        style={{ fill: 'var(--accent)', fillOpacity: 0.25, stroke: 'var(--accent)', strokeWidth: 2 }}
+      />
+      {skills.map((s, i) => {
+        const [x, y] = pt(i, (s.mastery ?? 0) / 100)
+        return (
+          <circle
+            key={s.id}
+            cx={x}
+            cy={y}
+            r={3.5}
+            style={s.mastery === null ? { fill: 'var(--surface)', stroke: 'var(--border)', strokeWidth: 1.5 } : { fill: 'var(--accent)' }}
+          />
+        )
+      })}
+      {skills.map((s, i) => {
+        const [lx, ly] = pt(i, 1.25)
+        const anchor = Math.abs(lx - cx) < 8 ? 'middle' : lx > cx ? 'start' : 'end'
+        return (
+          <text
+            key={s.id}
+            x={lx}
+            y={ly}
+            textAnchor={anchor}
+            dominantBaseline="middle"
+            style={{ fontSize: 11, fill: s.mastery === null ? 'var(--text-muted)' : 'var(--text-soft)', fontWeight: 600 }}
+          >
+            {s.short}
+            {s.mastery !== null ? ` ${s.mastery}` : ''}
+          </text>
+        )
+      })}
+    </svg>
+  )
+}
+
+function SkillMap({ skills }) {
+  const has = skills.some((s) => s.mastery !== null || s.chatErrors > 0)
+  if (!has) {
+    return (
+      <div style={{ ...progressStyles.cardSub, marginTop: '10px' }}>
+        Chưa có dữ liệu. Làm vài bài trắc nghiệm hoặc ôn lỗi cũ, bản đồ kỹ năng sẽ hiện ra ở đây.
+      </div>
+    )
+  }
+  const sorted = [...skills].sort((a, b) => (a.mastery ?? 101) - (b.mastery ?? 101) || b.chatErrors - a.chatErrors)
+  return (
+    <>
+      <div style={{ marginTop: '10px' }}>
+        <SkillRadar skills={skills} />
+      </div>
+      <div style={{ marginTop: '8px' }}>
+        {sorted.map((s) => (
+          <div key={s.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: fs(13) }}>
+              <span style={{ fontWeight: '600' }}>{s.label}</span>
+              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+                {s.mastery === null ? 'Chưa đủ dữ liệu' : `${s.mastery}/100 · ${s.correct}/${s.total} đúng`}
+              </span>
+            </div>
+            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border-soft)', marginTop: '6px', overflow: 'hidden' }}>
+              <div style={{ width: `${s.mastery ?? 0}%`, height: '100%', background: masteryColor(s.mastery), borderRadius: '999px' }} />
+            </div>
+            {s.chatErrors > 0 && (
+              <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '4px' }}>
+                {s.chatErrors} lỗi trong chat (30 ngày gần đây)
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+function ProgressScreen({ profileId, profile, onExit }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [insight, setInsight] = useState('')
+  const [insightBusy, setInsightBusy] = useState(false)
+  const [insightErr, setInsightErr] = useState('')
+
+  useEffect(() => {
+    window.api.getProgress({ profileId }).then((res) => {
+      setData(res.success ? res : null)
+      setLoading(false)
+    })
+  }, [])
+
+  const askInsight = async () => {
+    setInsightBusy(true)
+    setInsightErr('')
+    const res = await window.api.getProgressInsight({ profileId, nativeLanguage: profile.nativeLanguage })
+    setInsightBusy(false)
+    if (res.success) setInsight(res.text)
+    else setInsightErr('Chưa tạo được nhận xét lúc này (AI có thể đang bận). Bạn thử lại nhé.')
+  }
+
+  const wrap = (children) => (
+    <div style={{ ...styles.container, justifyContent: 'flex-start', overflowY: 'auto', paddingTop: '32px' }} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      {children}
+    </div>
+  )
+
+  if (loading) return wrap(<p>Đang tính số liệu...</p>)
+
+  if (!data || data.totals.messages === 0) {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Tiến bộ của bạn</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>
+          Chưa có đủ dữ liệu. Hãy trò chuyện với AI vài ngày, số liệu sẽ xuất hiện ở đây.
+        </p>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+      </>
+    )
+  }
+
+  const { weeks, categories, totals, levels } = data
+  const wl = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
+  const sourceLabel = (s) => (s === 'placement' ? 'bài đánh giá' : 'tự chọn')
+
+  return wrap(
+    <>
+      <div>
+        <h2 style={styles.question}>Tiến bộ của bạn</h2>
+        <p style={{ margin: '6px 0 0', fontSize: fs(13), color: 'var(--text-muted)' }}>Tính theo tuần, bắt đầu từ thứ Hai</p>
+      </div>
+
+      <div style={{ ...progressStyles.stats, maxWidth: '640px' }}>
+        <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={progressStyles.cardTitle}>Bản đồ kỹ năng</div>
+        <div style={progressStyles.cardSub}>
+          Điểm làm chủ = tỷ lệ đúng trong quiz và ôn lỗi gần đây (tối đa 20 câu mỗi kỹ năng, có làm mượt). Kỹ năng dưới 3 câu chưa được tính (hiện vòng rỗng). Nhãn kỹ năng do AI gán nên có thể có sai số.
+        </div>
+        <SkillMap skills={data.skills || []} />
+      </div>
+        <div style={progressStyles.stat}>
+          <div style={progressStyles.statNum}>{totals.messages}</div>
+          <div style={progressStyles.statLabel}>tin nhắn đã gửi</div>
+        </div>
+        <div style={progressStyles.stat}>
+          <div style={progressStyles.statNum}>{totals.streak}</div>
+          <div style={progressStyles.statLabel}>ngày liên tiếp · học {totals.activeDays30}/30 ngày</div>
+        </div>
+        <div style={progressStyles.stat}>
+          <div style={progressStyles.statNum}>{totals.words}</div>
+          <div style={progressStyles.statLabel}>từ vựng đã lưu</div>
+        </div>
+        <div style={progressStyles.stat}>
+          <div style={progressStyles.statNum}>{totals.mastered}/{totals.mistakes}</div>
+          <div style={progressStyles.statLabel}>lỗi đã nhớ vững (ôn đúng từ 7 ngày)</div>
+        </div>
+      </div>
+
+      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={progressStyles.cardTitle}>Lỗi trên mỗi 10 tin nhắn</div>
+        <div style={progressStyles.cardSub}>
+          Thấp hơn là tốt hơn. Tuần không có tin nhắn được để trống. Đây chỉ là chỉ báo gần đúng, vì còn phụ thuộc độ khó chủ đề và độ dài tin nhắn.
+        </div>
+        <RateSummary weeks={weeks} />
+        <BarChart data={rateData(weeks)} />
+      </div>
+
+      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={progressStyles.cardTitle}>Số tin nhắn mỗi tuần</div>
+        <BarChart data={weeks.map((w) => ({ label: weekLabel(w), value: w.messages > 0 ? w.messages : null }))} />
+      </div>
+
+      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={progressStyles.cardTitle}>Loại lỗi hay gặp</div>
+        <div style={progressStyles.cardSub}>4 tuần gần đây so với 4 tuần trước đó</div>
+        <div style={{ marginTop: '8px' }}>
+          {categories.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có dữ liệu loại lỗi.</div>}
+          {categories.map((c) => {
+            const diff = c.recent - c.previous
+            const badge =
+              c.previous === 0
+                ? { text: 'Mới', color: 'var(--text-muted)' }
+                : diff < 0
+                  ? { text: 'Giảm', color: '#27ae60' }
+                  : diff > 0
+                    ? { text: 'Tăng', color: '#c0392b' }
+                    : { text: 'Giữ nguyên', color: 'var(--text-muted)' }
+            return (
+              <div key={c.category} style={progressStyles.catRow}>
+                <span style={{ flex: 1, minWidth: 0 }}>{c.category}</span>
+                <span style={{ color: 'var(--text-muted)' }}>{c.previous} → {c.recent}</span>
+                <span style={{ width: '78px', textAlign: 'right', fontWeight: '700', color: badge.color }}>{badge.text}</span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {levels.length > 0 && (
+        <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+          <div style={progressStyles.cardTitle}>Lịch sử trình độ</div>
+          <div style={{ marginTop: '8px' }}>
+            {levels.map((l, i) => (
+              <div key={i} style={progressStyles.catRow}>
+                <span>{l.old_level ? `${l.old_level} → ${l.new_level}` : `Bắt đầu ở ${l.new_level}`}</span>
+                <span style={{ color: 'var(--text-muted)' }}>{l.day} · {sourceLabel(l.source)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+          <div style={progressStyles.cardTitle}>Nhận xét của AI</div>
+          <button
+            className="qprimary"
+            style={{ ...quizStyles.primary, padding: '8px 16px', fontSize: fs(13), ...(insightBusy ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+            onClick={askInsight}
+            disabled={insightBusy}
+          >
+            <Icon name="sparkle" size={14} /> {insightBusy ? 'Đang viết...' : insight ? 'Viết lại' : 'Nhờ AI nhận xét'}
+          </button>
+        </div>
+        {insight && <div style={{ marginTop: '10px', fontSize: fs(14), lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{insight}</div>}
+        {insightErr && <div style={{ marginTop: '10px', fontSize: fs(13), color: '#c0392b' }}>{insightErr}</div>}
+        {!insight && !insightErr && (
+          <div style={progressStyles.cardSub}>AI sẽ đọc các số liệu ở trên và viết vài câu nhận xét kèm một gợi ý cho tuần tới.</div>
+        )}
+      </div>
+
+      <button className="qghost" style={{ ...quizStyles.ghost, marginBottom: '16px' }} onClick={onExit}>
+        <Icon name="back" size={16} /> Quay lại
+      </button>
+    </>
+  )
+}
+
+function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [insight, setInsight] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.getProgress({ profileId }).then((res) => {
+      if (cancelled) return
+      setData(res.success ? res : null)
+      setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [profileId, refreshKey])
+
+  const askInsight = async () => {
+    setBusy(true)
+    setErr('')
+    const res = await window.api.getProgressInsight({ profileId, nativeLanguage: profile.nativeLanguage })
+    setBusy(false)
+    if (res.success) setInsight(res.text)
+    else setErr('Chưa tạo được nhận xét (AI có thể đang bận).')
+  }
+
+  if (loading) return <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Đang tính số liệu...</div>
+
+  if (!data || data.totals.messages === 0) {
+    return (
+      <div style={{ ...styles.statCard, fontSize: fs(13), color: 'var(--text-muted)' }}>
+        Chưa có đủ dữ liệu. Hãy trò chuyện vài ngày, số liệu tiến bộ sẽ xuất hiện ở đây.
+      </div>
+    )
+  }
+
+  const { weeks, categories, totals } = data
+  const wl = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+        <div style={styles.statCard}>
+          <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>{totals.messages}</div>
+          <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>tin nhắn đã gửi</div>
+        </div>
+        <div style={styles.statCard}>
+          <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>
+            {totals.mastered}/{totals.mistakes}
+          </div>
+          <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>lỗi đã nhớ vững</div>
+        </div>
+      </div>
+
+      <div style={styles.statCard}>
+        <div style={{ fontSize: fs(13), fontWeight: '700' }}>Lỗi trên mỗi 10 tin nhắn</div>
+        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '2px' }}>
+          8 tuần gần đây · thấp hơn là tốt hơn
+        </div>
+        <RateSummary weeks={weeks} />
+        <BarChart height={70} labelEvery={2} data={rateData(weeks)} />
+      </div>
+
+      {/* Thẻ mới: Kỹ năng cần luyện */}
+      {(() => {
+        const sk = data.skills || []
+        const scored = sk.filter((s) => s.mastery !== null).sort((a, b) => a.mastery - b.mastery).slice(0, 3)
+        const chatOnly = sk.filter((s) => s.chatErrors > 0).sort((a, b) => b.chatErrors - a.chatErrors).slice(0, 3)
+        const list = scored.length > 0 ? scored : chatOnly
+        return (
+          <div style={styles.statCard}>
+            <div style={{ fontSize: fs(13), fontWeight: '700' }}>Kỹ năng cần luyện</div>
+            <div style={{ fontSize: fs(11), color: 'var(--text-muted)', margin: '2px 0 8px' }}>
+              {scored.length > 0 ? 'Điểm thấp nhất từ quiz và ôn lỗi' : 'Dựa trên lỗi trong chat (chưa có điểm quiz)'}
+            </div>
+            {list.length === 0 && (
+              <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>Làm vài bài trắc nghiệm để có dữ liệu.</div>
+            )}
+            {list.map((s) => (
+              <div key={s.id} style={{ marginBottom: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: fs(12) }}>
+                  <span>{s.label}</span>
+                  <strong>{s.mastery !== null ? s.mastery : `${s.chatErrors} lỗi`}</strong>
+                </div>
+                <div style={{ height: '5px', borderRadius: '999px', background: 'var(--border-soft)', marginTop: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${s.mastery ?? 0}%`, height: '100%', background: masteryColor(s.mastery), borderRadius: '999px' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
+
+      <div style={styles.statCard}>
+        <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '4px' }}>Loại lỗi hay gặp</div>
+        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginBottom: '6px' }}>4 tuần gần đây so với trước đó</div>
+        {categories.length === 0 && <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
+        {categories.slice(0, 3).map((c) => {
+          const diff = c.recent - c.previous
+          const badge =
+            c.previous === 0
+              ? { text: 'Mới', color: 'var(--text-muted)' }
+              : diff < 0
+                ? { text: 'Giảm', color: '#27ae60' }
+                : diff > 0
+                  ? { text: 'Tăng', color: '#c0392b' }
+                  : { text: 'Giữ', color: 'var(--text-muted)' }
+          return (
+            <div key={c.category} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: fs(12), marginBottom: '4px' }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.category}</span>
+              <span style={{ color: 'var(--text-muted)' }}>{c.previous}→{c.recent}</span>
+              <strong style={{ color: badge.color, minWidth: '34px', textAlign: 'right' }}>{badge.text}</strong>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={styles.statCard}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+          <div style={{ fontSize: fs(13), fontWeight: '700' }}>Nhận xét của AI</div>
+          <button
+            style={{ ...notesStyles.smallAction, ...(busy ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+            onClick={askInsight}
+            disabled={busy}
+          >
+            <Icon name="sparkle" size={12} /> {busy ? 'Đang viết...' : insight ? 'Viết lại' : 'Nhờ AI'}
+          </button>
+        </div>
+        {insight && <div style={{ marginTop: '8px', fontSize: fs(12), lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{insight}</div>}
+        {err && <div style={{ marginTop: '8px', fontSize: fs(12), color: '#c0392b' }}>{err}</div>}
+      </div>
+
+      <button
+        style={{ ...notesStyles.smallAction, alignSelf: 'center', marginTop: '2px' }}
+        onClick={onOpenFull}
+      >
+        Xem đầy đủ <Icon name="next" size={12} />
+      </button>
+    </>
+  )
+}
+
 
 function AddWordBox({ profileId, profile, cefrLevel, onAdded }) {
   const [text, setText] = useState('')
@@ -1629,6 +2227,8 @@ function AppContent({ settings }) {
   const [showReview, setShowReview] = useState(false)
   const [showPractice, setShowPractice] = useState(false)
   const [showVocab, setShowVocab] = useState(false)
+  const [showProgress, setShowProgress] = useState(false)
+  const [rightTab, setRightTab] = useState('today') 
   const [username, setUsername] = useState('')
   const [existingProfiles, setExistingProfiles] = useState([])
   const [usernameError, setUsernameError] = useState('')
@@ -1957,6 +2557,7 @@ const handleLogout = () => {
   setManualLevel('')
   setPlacementError('')
   setShowNotes(false)
+  setShowProgress(false)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -2283,6 +2884,16 @@ if (showVocab) {
   )
 }
 
+  if (showProgress) {
+    return (
+      <ProgressScreen
+        profileId={profileId}
+        profile={profile}
+        onExit={() => setShowProgress(false)}
+      />
+    )
+  }
+
 if (showPractice) {
   return (
     <ReviewHub
@@ -2316,9 +2927,10 @@ return (
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {topicOptions.map((t) => (
-              <button
+                <button
                 key={t.id}
-                style={{ ...styles.sidebarButton, textAlign: 'left' }}
+                className="level-card"
+                style={{ ...styles.sidebarButton, background: 'var(--surface-soft)', fontWeight: '500' }}
                 onClick={() => selectTopicAndStart(t.id)}
               >
                 {t.label}
@@ -2448,6 +3060,9 @@ return (
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => setShowVocab(true)}>
           <Icon name="cards" size={17} /> Từ vựng
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={() => setShowProgress(true)}>
+          <Icon name="trend" size={17} /> Tiến bộ
         </button>
         <button className="nav-item" style={styles.navItem} onClick={handleOpenNotes}>
           <Icon name="user" size={17} /> AI biết gì về bạn
@@ -2635,54 +3250,76 @@ return (
 </div> 
     </main>
 
-    {/* Panel thống kê phải */}
+      {/* Panel thống kê phải */}
     <aside className="right-panel" style={styles.rightPanel}>
-      <h3 style={{ margin: 0, fontSize: fs(16), fontWeight: '700' }}>Thống kê của bạn</h3>
-      <div style={styles.statCard}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-          <Icon name="flame" size={18} />
-          <span style={{ fontSize: fs(18), fontWeight: '700' }}>{dailyStats.streak}</span>
-          <span style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>ngày liên tiếp</span>
-        </div>
-        <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginBottom: '4px' }}>
-          Mục tiêu hôm nay: {Math.min(dailyStats.messagesToday, DAILY_GOAL)}/{DAILY_GOAL} tin nhắn
-        </div>
-        <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
-          <div style={{
-            width: `${Math.min(100, (dailyStats.messagesToday / DAILY_GOAL) * 100)}%`,
-            height: '100%',
-            background: 'var(--accent)',
-            borderRadius: '999px'
-          }} />
-        </div>
-      </div>
-      <div style={styles.statCard}>
-        <div style={{ fontSize: fs(32), fontWeight: '700', color: 'var(--accent)' }}>{mistakes.length}</div>
-        <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>lỗi đã ghi nhận</div>
+      <div style={{ display: 'flex', justifyContent: 'center' }}>
+        <SegmentedControl
+          value={rightTab}
+          onChange={setRightTab}
+          options={[
+            { value: 'today', label: 'Hôm nay' },
+            { value: 'progress', label: 'Tiến bộ' }
+          ]}
+        />
       </div>
 
-      <div style={styles.statCard}>
-        <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi hay gặp nhất</div>
-        {categoryCounts.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
-        {categoryCounts.map(([cat, count]) => (
-          <div key={cat} style={{ fontSize: fs(13), display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span>{cat}</span>
-            <strong>{count}</strong>
+      {rightTab === 'progress' ? (
+        <ProgressPanel
+          profileId={profileId}
+          profile={profile}
+          refreshKey={`${dailyStats.totalMessages}-${mistakes.length}`}
+          onOpenFull={() => setShowProgress(true)}
+        />
+      ) : (
+        <>
+          <div style={styles.statCard}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Icon name="flame" size={18} />
+              <span style={{ fontSize: fs(18), fontWeight: '700' }}>{dailyStats.streak}</span>
+              <span style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>ngày liên tiếp</span>
+            </div>
+            <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginBottom: '4px' }}>
+              Mục tiêu hôm nay: {Math.min(dailyStats.messagesToday, DAILY_GOAL)}/{DAILY_GOAL} tin nhắn
+            </div>
+            <div style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
+              <div style={{
+                width: `${Math.min(100, (dailyStats.messagesToday / DAILY_GOAL) * 100)}%`,
+                height: '100%',
+                background: 'var(--accent)',
+                borderRadius: '999px'
+              }} />
+            </div>
           </div>
-        ))}
-      </div>
 
-      <div style={styles.statCard}>
-        <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi gần đây</div>
-        {mistakes.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có lỗi nào</div>}
-        {mistakes.slice(0, 3).map((m) => (
-          <div key={m.id} style={{ fontSize: fs(13), marginBottom: '8px' }}>
-            <span style={{ color: '#c0392b', textDecoration: 'line-through' }}>{m.original_text}</span>
-            {' → '}
-            <span style={{ color: '#27ae60', fontWeight: '600' }}>{m.corrected_text}</span>
+          <div style={styles.statCard}>
+            <div style={{ fontSize: fs(32), fontWeight: '700', color: 'var(--accent)' }}>{mistakes.length}</div>
+            <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>lỗi đã ghi nhận</div>
           </div>
-        ))}
-      </div>
+
+          <div style={styles.statCard}>
+            <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi hay gặp nhất</div>
+            {categoryCounts.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
+            {categoryCounts.map(([cat, count]) => (
+              <div key={cat} style={{ fontSize: fs(13), display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span>{cat}</span>
+                <strong>{count}</strong>
+              </div>
+            ))}
+          </div>
+
+          <div style={styles.statCard}>
+            <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi gần đây</div>
+            {mistakes.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có lỗi nào</div>}
+            {mistakes.slice(0, 3).map((m) => (
+              <div key={m.id} style={{ fontSize: fs(13), marginBottom: '8px' }}>
+                <span style={{ color: '#c0392b', textDecoration: 'line-through' }}>{m.original_text}</span>
+                {' → '}
+                <span style={{ color: '#27ae60', fontWeight: '600' }}>{m.corrected_text}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
   </div>
 )
@@ -2757,27 +3394,32 @@ const styles = {
     outline: 'none',
     resize: 'none'
   },
-  button: {
-    padding: '14px 36px',
-    fontSize: fs(15),
-    fontWeight: '700',
-    letterSpacing: '0.5px',
-    borderRadius: '999px',
-    border: '1.5px solid var(--btn-border)',
-    background: 'var(--surface)',
-    color: 'var(--btn-text)',
-    cursor: 'pointer',
-    textTransform: 'uppercase'
-  },
-  backButton: {
-    padding: '14px 24px',
+    button: {
+    padding: '11px 26px',
     fontSize: fs(15),
     fontWeight: '600',
     borderRadius: '999px',
-    border: '1.5px solid transparent',
+    border: 'none',
+    background: 'var(--accent)',
+    color: '#ffffff',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px'
+  },
+  backButton: {
+    padding: '11px 16px',
+    fontSize: fs(14),
+    fontWeight: '600',
+    borderRadius: '999px',
+    border: 'none',
     background: 'transparent',
     color: 'var(--text-muted)',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px'
   },
   chatBubble: {
     padding: '10px 16px',
@@ -3578,6 +4220,7 @@ function App() {
   return (
     <>
       <style>{scrollbarStyle}</style>
+      <style>{buttonCss}</style>
       <AppContent settings={settings} />
       <button style={{ ...settingsStyles.gear, display: 'flex', alignItems: 'center', justifyContent: 'center', }} onClick={() => setShowSettings(true)} title="Cài đặt">
         <Icon name="settings" size={20} />

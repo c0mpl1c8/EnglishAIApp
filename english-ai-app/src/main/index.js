@@ -191,6 +191,49 @@ function normalizeAnswer(s) {
     .trim()
 }
 
+const SKILLS = [
+  { id: 'tense', label: 'Thì động từ', short: 'Thì' },
+  { id: 'agreement', label: 'Hòa hợp chủ ngữ - động từ', short: 'Hòa hợp' },
+  { id: 'article', label: 'Mạo từ', short: 'Mạo từ' },
+  { id: 'preposition', label: 'Giới từ', short: 'Giới từ' },
+  { id: 'word_order', label: 'Trật tự từ', short: 'Trật tự' },
+  { id: 'vocabulary', label: 'Từ vựng & chọn từ', short: 'Từ vựng' },
+  { id: 'spelling', label: 'Chính tả & dấu câu', short: 'Chính tả' },
+  { id: 'structure', label: 'Cấu trúc câu', short: 'Cấu trúc' },
+  { id: 'other', label: 'Khác', short: 'Khác' }
+]
+const SKILL_IDS = SKILLS.map((s) => s.id)
+const SKILL_BY_ID = Object.fromEntries(SKILLS.map((s) => [s.id, s]))
+
+// Thứ tự kiểm tra quan trọng: "chủ ngữ sai vị trí" là trật tự từ, nên kiểm tra trước "chủ ngữ"
+const SKILL_RULES = [
+  ['word_order', /trật tự|vị trí|word order|sắp xếp/],
+  ['agreement', /hòa hợp|hoà hợp|chủ ngữ|agreement|subject|số ít|số nhiều/],
+  ['tense', /thì|tense|quá khứ|hiện tại|tương lai|hoàn thành|động từ|verb/],
+  ['article', /mạo từ|article/],
+  ['preposition', /giới từ|preposition/],
+  ['spelling', /chính tả|dấu câu|viết hoa|spelling|punctuation|capital/],
+  ['vocabulary', /từ vựng|chọn từ|dùng từ|collocation|vocabulary|word choice|từ loại|nghĩa/],
+  ['structure', /điều kiện|bị động|mệnh đề|câu phức|cấu trúc|conditional|passive|clause|relative|so sánh|structure/]
+]
+
+function skillFromCategory(cat) {
+  const c = String(cat || '').toLowerCase().trim()
+  if (SKILL_IDS.includes(c)) return c
+  for (const [id, re] of SKILL_RULES) if (re.test(c)) return id
+  return 'other'
+}
+
+// Gán kỹ năng cho các lỗi cũ chưa có (chạy một lần khi khởi động, những lần sau không còn dòng nào)
+function backfillSkills() {
+  const rows = db.prepare(`SELECT id, category FROM mistakes WHERE skill IS NULL`).all()
+  if (rows.length === 0) return
+  const upd = db.prepare(`UPDATE mistakes SET skill = ? WHERE id = ?`)
+  db.transaction((list) => {
+    for (const r of list) upd.run(skillFromCategory(r.category), r.id)
+  })(rows)
+}
+
 function shuffle(arr) {
   const a = [...arr]
   for (let i = a.length - 1; i > 0; i--) {
@@ -260,7 +303,132 @@ function calcStreak(profileId) {
   }
   return streak
 }
+const dateKey = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
+// Ngày thứ Hai đầu tuần của một ngày dạng YYYY-MM-DD
+function mondayKey(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7))
+  return dateKey(dt)
+}
+
+function buildProgress(profileId) {
+  const WEEKS = 8
+  const thisMonday = new Date()
+  thisMonday.setHours(0, 0, 0, 0)
+  thisMonday.setDate(thisMonday.getDate() - ((thisMonday.getDay() + 6) % 7))
+
+  const weeks = []
+  for (let i = WEEKS - 1; i >= 0; i--) {
+    const start = new Date(thisMonday)
+    start.setDate(start.getDate() - i * 7)
+    weeks.push({ start: dateKey(start), messages: 0, mistakes: 0, words: 0, rate: null })
+  }
+  const idx = new Map(weeks.map((w, i) => [w.start, i]))
+  const bump = (day, field) => {
+    const i = idx.get(mondayKey(day))
+    if (i !== undefined) weeks[i][field]++
+  }
+
+  db.prepare(`
+    SELECT date(created_at, 'localtime') AS day FROM chat_messages
+    WHERE profile_id = ? AND role = 'user' AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
+  `).all(profileId).forEach((r) => bump(r.day, 'messages'))
+
+  const mistakeRows = db.prepare(`
+    SELECT category, skill, date(created_at, 'localtime') AS day
+    WHERE profile_id = ? AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
+  `).all(profileId)
+  mistakeRows.forEach((r) => bump(r.day, 'mistakes'))
+
+  db.prepare(`
+    SELECT date(created_at, 'localtime') AS day FROM vocabulary
+    WHERE profile_id = ? AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
+  `).all(profileId).forEach((r) => bump(r.day, 'words'))
+
+  // Lỗi trên mỗi 10 tin nhắn (làm tròn 1 chữ số); tuần không có tin nhắn thì để null
+  weeks.forEach((w) => {
+    w.rate = w.messages > 0 ? Math.round((w.mistakes / w.messages) * 100) / 10 : null
+  })
+
+  // Xu hướng từng loại lỗi: 28 ngày gần đây so với 28 ngày trước đó
+  const cut28 = new Date()
+  cut28.setDate(cut28.getDate() - 28)
+  const cut56 = new Date()
+  cut56.setDate(cut56.getDate() - 56)
+  const cut28Key = dateKey(cut28)
+  const cut56Key = dateKey(cut56)
+  const cat = new Map()
+  for (const r of mistakeRows) {
+    const id = r.skill || skillFromCategory(r.category)
+    const e = cat.get(id) || { category: SKILL_BY_ID[id]?.label || 'Khác', recent: 0, previous: 0 }
+    if (r.day >= cut28Key) e.recent++
+    else if (r.day >= cut56Key) e.previous++
+    cat.set(id, e)
+  }
+  const categories = [...cat.values()]
+    .filter((c) => c.recent + c.previous > 0)
+    .sort((a, b) => b.recent + b.previous - (a.recent + a.previous))
+    .slice(0, 5)
+
+  const one = (sql, ...args) => db.prepare(sql).get(...args)?.c || 0
+  const totals = {
+    messages: countUserMessages(profileId),
+    mistakes: one(`SELECT COUNT(*) AS c FROM mistakes WHERE profile_id = ?`, profileId),
+    mastered: one(`SELECT COUNT(*) AS c FROM mistakes WHERE profile_id = ? AND interval_days >= 7`, profileId),
+    words: one(`SELECT COUNT(*) AS c FROM vocabulary WHERE profile_id = ?`, profileId),
+    streak: calcStreak(profileId),
+    activeDays30: one(`
+      SELECT COUNT(DISTINCT date(created_at, 'localtime')) AS c FROM chat_messages
+      WHERE profile_id = ? AND role = 'user' AND date(created_at, 'localtime') >= date('now', 'localtime', '-29 days')
+    `, profileId)
+  }
+
+  const levels = db.prepare(`
+    SELECT old_level, new_level, source, date(created_at, 'localtime') AS day
+    FROM level_history WHERE profile_id = ? ORDER BY id DESC LIMIT 5
+  `).all(profileId)
+
+    // Bản đồ kỹ năng: điểm làm chủ = tỷ lệ đúng trong tối đa 20 sự kiện gần nhất (làm mượt), cần từ 3 sự kiện
+  const MIN_SKILL_EVENTS = 3
+  const evBySkill = {}
+  db.prepare(`
+    SELECT skill, correct FROM skill_events
+    WHERE profile_id = ? AND date(created_at, 'localtime') >= date('now', 'localtime', '-90 days')
+    ORDER BY id DESC
+  `).all(profileId).forEach((r) => {
+    const list = (evBySkill[r.skill] = evBySkill[r.skill] || [])
+    if (list.length < 20) list.push(r.correct)
+  })
+  const cut30 = new Date()
+  cut30.setDate(cut30.getDate() - 30)
+  const cut30Key = dateKey(cut30)
+  const chat30 = {}
+  mistakeRows.forEach((r) => {
+    if (r.day >= cut30Key) {
+      const id = r.skill || skillFromCategory(r.category)
+      chat30[id] = (chat30[id] || 0) + 1
+    }
+  })
+  const skills = SKILLS.filter((s) => s.id !== 'other').map((s) => {
+    const list = evBySkill[s.id] || []
+    const total = list.length
+    const correct = list.reduce((a, b) => a + b, 0)
+    return {
+      id: s.id,
+      label: s.label,
+      short: s.short,
+      total,
+      correct,
+      mastery: total >= MIN_SKILL_EVENTS ? Math.round(((correct + 1) / (total + 2)) * 100) : null,
+      chatErrors: chat30[s.id] || 0
+    }
+  })
+
+  return { weeks, categories, totals, levels, skills }
+}
 // ===== Bộ nhớ người học =====
 const NOTES_EVERY = 10 // cập nhật ghi chú sau mỗi ngần này tin nhắn (đặt 3 khi muốn thử nhanh)
 const updatingNotes = new Set()
@@ -347,6 +515,13 @@ function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(() => {
+
+    try {
+    backfillSkills()
+  } catch (e) {
+    logError('backfill', e)
+  }
+
   // Set app user model id for windows
   electronApp.setAppUserModelId('com.electron')
 
@@ -489,7 +664,7 @@ Luôn trả lời CHỈ bằng JSON theo đúng format sau, không thêm chữ n
   "reply": "câu trả lời trò chuyện với học viên (theo các quy tắc ở trên)",
   "mistakes": [
     {
-      "category": "loại lỗi (ví dụ: thì động từ, trật tự từ, từ vựng, chính tả)",
+      "category": "chọn ĐÚNG MỘT trong: ${SKILLS.map((s) => s.label).join(' | ')}",
       "original": "phần học viên viết sai",
       "corrected": "phần đã sửa đúng",
       "explanation": "giải thích ngắn gọn bằng tiếng Việt"
@@ -543,11 +718,13 @@ Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. T
 
       if (parsed.mistakes && parsed.mistakes.length > 0) {
         const stmt = db.prepare(`
-          INSERT INTO mistakes (profile_id, category, original_text, corrected_text, explanation)
-          VALUES (?, ?, ?, ?, ?)
+          INSERT INTO mistakes (profile_id, category, original_text, corrected_text, explanation, skill)
+          VALUES (?, ?, ?, ?, ?, ?)
         `)
         for (const m of parsed.mistakes) {
-         stmt.run(profileId, s(m.category), s(m.original), s(m.corrected), s(m.explanation))
+          const skill = skillFromCategory(m.category)
+          const category = skill !== 'other' ? SKILL_BY_ID[skill].label : s(m.category) || 'Khác'
+          stmt.run(profileId, category, s(m.original), s(m.corrected), s(m.explanation), skill)
         }
       }
 
@@ -748,6 +925,56 @@ Trả lời CHỈ bằng một mảng JSON, cùng thứ tự với danh sách: [
     }
   })
 
+  ipcMain.handle('get-progress', async (event, { profileId }) => {
+    try {
+      return { success: true, ...buildProgress(profileId) }
+    } catch (error) {
+      console.error('Progress error:', error)
+      logError('progress', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('get-progress-insight', async (event, { profileId, nativeLanguage }) => {
+    try {
+      const d = buildProgress(profileId)
+      const recentMessages = d.weeks.reduce((s, w) => s + w.messages, 0)
+      const table = d.weeks
+        .map((w) => `${w.start}: ${w.messages} tin nhắn, ${w.mistakes} lỗi, ${w.words} từ mới, ${w.rate ?? 'không có'} lỗi/10 tin nhắn`)
+        .join('\n')
+      const cats = d.categories
+        .map((c) => `- ${c.category}: ${c.previous} (4 tuần trước) → ${c.recent} (4 tuần gần đây)`)
+        .join('\n') || '(chưa có)'
+
+      const response = await generateWithRetry({
+        json: false,
+        maxTokens: 700,
+        contents: `Bạn là gia sư ngôn ngữ. Dưới đây là số liệu học tập của một học viên theo từng tuần (tuần bắt đầu từ thứ Hai):
+${table}
+
+Loại lỗi (4 tuần gần đây so với 4 tuần trước):
+${cats}
+
+Tổng: ${d.totals.messages} tin nhắn, chuỗi ${d.totals.streak} ngày, học ${d.totals.activeDays30}/30 ngày gần đây, ${d.totals.words} từ vựng, ${d.totals.mastered}/${d.totals.mistakes} lỗi đã nhớ vững.
+
+Hãy viết nhận xét ngắn (3-4 câu) bằng ${nativeLanguage || 'tiếng Việt'}: điểm tiến bộ, điều cần cải thiện, và MỘT gợi ý cụ thể cho tuần tới.
+Quy tắc:
+- Chỉ dựa trên số liệu ở trên, không bịa thêm.
+- Tổng số tin nhắn trong 8 tuần là ${recentMessages}. Nếu dưới 20 hoặc có ít tuần dữ liệu, hãy nói rõ dữ liệu còn ít nên chưa kết luận chắc chắn.
+- Tỷ lệ lỗi chỉ là chỉ báo gần đúng (phụ thuộc độ khó chủ đề và độ dài tin nhắn); không khẳng định chắc chắn về trình độ.
+- Giọng động viên, trung thực, không khoa trương.`
+      })
+
+      const text = response.text.replace(/```/g, '').trim().slice(0, 1200)
+      if (!text) throw new Error('Insight rỗng')
+      return { success: true, text }
+    } catch (error) {
+      console.error('Insight error:', error)
+      logError('insight', error)
+      return { success: false }
+    }
+  })
+
   ipcMain.handle('get-learner-notes', async (event, { profileId }) => {
     try {
       const row = db.prepare(`SELECT learner_notes, notes_enabled FROM profile WHERE id = ?`).get(profileId)
@@ -777,6 +1004,19 @@ Trả lời CHỈ bằng một mảng JSON, cùng thứ tự với danh sách: [
   })
 
   // ===== Spaced repetition =====
+
+  ipcMain.handle('record-skill-event', async (event, { profileId, skill, correct, source }) => {
+    try {
+      if (!SKILL_IDS.includes(skill)) return { success: false }
+      db.prepare(`
+        INSERT INTO skill_events (profile_id, skill, correct, source) VALUES (?, ?, ?, ?)
+      `).run(profileId, skill, correct ? 1 : 0, source || 'quiz')
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
 
   ipcMain.handle('generate-quiz', async (event, { profileId, targetLanguage, nativeLanguage, cefrLevel, topic, count }) => {
     try {
@@ -829,7 +1069,8 @@ Quy tắc:
 - Không trùng ý giữa các câu.
 - "answer" phải là CHÍNH XÁC nội dung của lựa chọn đúng (sao chép nguyên văn từ "options").
 - "explanation": 1-2 câu ngắn bằng ${nativeLanguage}, giải thích vì sao đáp án đúng.
-Trả lời CHỈ bằng JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","explanation":"..."}]}`
+- "skill": kỹ năng mà câu hỏi kiểm tra, chọn MỘT mã trong: ${SKILLS.filter((s) => s.id !== 'other').map((s) => `${s.id} (${s.label})`).join(', ')}, hoặc other.
+  Trả lời CHỈ bằng JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","skill":"tense","explanation":"..."}]}`
       })
 
       const parsed = JSON.parse(response.text.replace(/```json|```/g, '').trim())
@@ -851,10 +1092,12 @@ Trả lời CHỈ bằng JSON: {"questions":[{"question":"...","options":["...",
 
         const correctText = options[idx]
         const mixed = shuffle(options) // xáo trộn để đáp án đúng không dồn về một vị trí
+        const skillId = SKILL_IDS.includes(q.skill) ? q.skill : skillFromCategory(String(q.skill ?? ''))
         questions.push({
           question: String(q.question).trim(),
           options: mixed,
           answer: mixed.indexOf(correctText),
+          skill: skillId,
           explanation: String(q.explanation ?? '').trim()
         })
       }
@@ -939,7 +1182,12 @@ Trả lời CHỈ bằng JSON: {"correct": true hoặc false, "feedback": "nhậ
         correct = judged.correct === true
         feedback = judged.feedback || ''
       }
-
+      const mk = db.prepare(`SELECT skill, category FROM mistakes WHERE id = ?`).get(mistakeId)
+      const skillId = mk?.skill || skillFromCategory(mk?.category)
+      db.prepare(`
+        INSERT INTO skill_events (profile_id, skill, correct, source)
+        SELECT profile_id, ?, ?, 'review' FROM mistakes WHERE id = ?
+      `).run(skillId, correct ? 1 : 0, mistakeId)
       // 2) Cập nhật lịch ôn
       const row = db.prepare(`SELECT interval_days FROM mistakes WHERE id = ?`).get(mistakeId)
       const current = row?.interval_days ?? 0
