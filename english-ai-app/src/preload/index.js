@@ -28,6 +28,7 @@ const api = {
   getProgress: (data) => ipcRenderer.invoke('get-progress', data),
   getProgressInsight: (data) => ipcRenderer.invoke('get-progress-insight', data),
   recordSkillEvent: (data) => ipcRenderer.invoke('record-skill-event', data),
+  generateAdaptiveQuiz: (data) => ipcRenderer.invoke('generate-adaptive-quiz', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

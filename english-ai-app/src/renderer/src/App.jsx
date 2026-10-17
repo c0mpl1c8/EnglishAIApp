@@ -1125,13 +1125,14 @@ const quizCss = `
   .qinput:focus { border-color: var(--accent) !important; }
 `
 function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
-  const [selected, setSelected] = useState('random')
+  const [selected, setSelected] = useState('weak')
   const [custom, setCustom] = useState('')
   const [count, setCount] = useState(5)
   const hasInfo = !!((profile.occupation || '').trim() || (profile.interests || '').trim())
   const usingCustom = !!custom.trim()
 
   const start = () => {
+    if (!usingCustom && selected === 'weak') return onStart({ adaptive: true, label: 'Luyện điểm yếu', count })
     if (usingCustom) return onStart({ topic: { type: 'custom', value: custom.trim() }, label: custom.trim(), count })
     if (selected === 'random') return onStart({ topic: { type: 'random' }, label: 'Ngẫu nhiên', count })
     if (selected === 'mistakes') return onStart({ topic: { type: 'mistakes' }, label: 'Từ lỗi của bạn', count })
@@ -1140,6 +1141,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   }
 
   const modes = [
+    { id: 'weak', icon: 'trend', title: 'Luyện điểm yếu của tôi', desc: 'AI chọn 2-3 kỹ năng yếu nhất, độ khó thay đổi theo từng câu', ok: true },
     { id: 'random', icon: 'cards', title: 'Ngẫu nhiên', desc: 'Đa dạng ngữ pháp và từ vựng', ok: true },
     {
       id: 'mistakes',
@@ -1284,7 +1286,7 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
     if (phase !== 'question') return
     const q = questions[index]
     const ok = i === q.answer
-    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'quiz' })
+    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'quiz', question: q.question })
     setPicked(i)
     if (ok) setScore((s) => s + 1)
     setPhase('answered')
@@ -1405,6 +1407,296 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
   )
 }
 
+const DIFF_ORDER = ['easy', 'medium', 'hard']
+const DIFF_LABEL = { easy: 'Dễ', medium: 'Vừa', hard: 'Khó' }
+
+// Chọn câu kế tiếp: gần độ khó mục tiêu nhất, rồi ưu tiên kỹ năng đã hỏi ít, tránh lặp kỹ năng vừa hỏi
+function pickNextQuestion(pool, used, target, askedBySkill, lastSkill) {
+  const cands = pool.map((q, i) => ({ q, i })).filter(({ i }) => !used.has(i))
+  if (cands.length === 0) return null
+  const dist = (q) => Math.abs(DIFF_ORDER.indexOf(q.difficulty) - target)
+  cands.sort(
+    (a, b) =>
+      dist(a.q) - dist(b.q) ||
+      (askedBySkill[a.q.skill] || 0) - (askedBySkill[b.q.skill] || 0) ||
+      Number(a.q.skill === lastSkill) - Number(b.q.skill === lastSkill)
+  )
+  return cands[0]
+}
+
+function QuestionBlock({ q, picked, answered, onChoose }) {
+  const letters = ['A', 'B', 'C', 'D', 'E']
+  return (
+    <>
+      <div style={practiceStyles.card}>
+        <div style={practiceStyles.sentence}>{q.question}</div>
+      </div>
+
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {q.options.map((o, i) => {
+          const isCorrect = i === q.answer
+          const isPicked = i === picked
+          const extra = !answered ? {} : isCorrect ? quizStyles.correct : isPicked ? quizStyles.wrong : quizStyles.dim
+          return (
+            <button
+              key={i}
+              className="quiz-opt"
+              style={{ ...quizStyles.option, ...extra, ...(answered ? { cursor: 'default' } : {}) }}
+              onClick={() => onChoose(i)}
+              disabled={answered}
+            >
+              <span style={quizStyles.letter}>{letters[i]}</span>
+              <span style={{ flex: 1 }}>{o}</span>
+              {answered && isCorrect && <Icon name="check" size={16} />}
+              {answered && isPicked && !isCorrect && <Icon name="close" size={16} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {answered && (
+        <div style={{ ...practiceStyles.feedback, ...(picked === q.answer ? practiceStyles.ok : practiceStyles.bad) }}>
+          <div style={{ fontWeight: '700' }}>{picked === q.answer ? 'Chính xác!' : `Đáp án đúng: ${q.options[q.answer]}`}</div>
+          {q.explanation && <div style={{ marginTop: '6px', fontSize: fs(13) }}>{q.explanation}</div>}
+        </div>
+      )}
+    </>
+  )
+}
+
+function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
+  // loading | intro | question | answered | done | error
+  const [phase, setPhase] = useState('loading')
+  const [pool, setPool] = useState([])
+  const [plan, setPlan] = useState([])
+  const [used, setUsed] = useState(new Set())
+  const [asked, setAsked] = useState([])
+  const [current, setCurrent] = useState(null)
+  const [target, setTarget] = useState(1) // 0 dễ, 1 vừa, 2 khó
+  const [picked, setPicked] = useState(null)
+  const [note, setNote] = useState('')
+  const [total, setTotal] = useState(count)
+  const [errMsg, setErrMsg] = useState('')
+
+  const load = async () => {
+    setPhase('loading')
+    setErrMsg('')
+    const res = await window.api.generateAdaptiveQuiz({
+      profileId,
+      targetLanguage: profile.targetLanguage,
+      nativeLanguage: profile.nativeLanguage,
+      cefrLevel
+    })
+    if (res.success && res.questions.length >= 3) {
+      setPool(res.questions)
+      setPlan(res.plan || [])
+      setTotal(Math.min(count, res.questions.length))
+      setUsed(new Set())
+      setAsked([])
+      setCurrent(null)
+      setTarget(1)
+      setPicked(null)
+      setNote('')
+      setPhase('intro')
+    } else {
+      setErrMsg(res.message || 'Không tạo được bộ câu hỏi.')
+      setPhase('error')
+    }
+  }
+
+  useEffect(() => {
+    load()
+  }, [])
+
+  const askedBySkill = () =>
+    asked.reduce((acc, a) => {
+      acc[a.skill] = (acc[a.skill] || 0) + 1
+      return acc
+    }, {})
+
+  const start = () => {
+    const first = pickNextQuestion(pool, new Set(), 1, {}, null)
+    if (!first) {
+      setErrMsg('Bộ câu hỏi trống.')
+      setPhase('error')
+      return
+    }
+    setCurrent(first)
+    setUsed(new Set([first.i]))
+    setPhase('question')
+  }
+
+  const choose = (i) => {
+    if (phase !== 'question' || !current) return
+    const q = current.q
+    const ok = i === q.answer
+     window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'adaptive', question: q.question })
+    setAsked((a) => [...a, { skill: q.skill, skillLabel: q.skillLabel, difficulty: q.difficulty, correct: ok }])
+    setNote(
+      ok
+        ? target < 2
+          ? 'Bạn trả lời đúng, câu này khó hơn một chút.'
+          : 'Bạn trả lời đúng ở mức khó nhất, tiếp tục giữ mức này.'
+        : target > 0
+          ? 'Câu trước chưa đúng, câu này dễ hơn một chút để củng cố.'
+          : 'Câu trước chưa đúng, giữ mức dễ để củng cố nền tảng.'
+    )
+    setTarget(ok ? Math.min(2, target + 1) : Math.max(0, target - 1))
+    setPicked(i)
+    setPhase('answered')
+  }
+
+  const next = () => {
+    if (asked.length >= total) {
+      setPhase('done')
+      return
+    }
+    const nx = pickNextQuestion(pool, used, target, askedBySkill(), current?.q.skill)
+    if (!nx) {
+      setPhase('done')
+      return
+    }
+    setCurrent(nx)
+    setUsed((u) => new Set(u).add(nx.i))
+    setPicked(null)
+    setPhase('question')
+  }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Enter' && phase === 'answered') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loading') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Đang chọn bài cho bạn...</h2>
+        <p style={{ color: 'var(--text-muted)', margin: 0, maxWidth: '380px' }}>
+          AI đang soạn bộ câu hỏi theo điểm yếu của bạn. Có thể mất 10 đến 30 giây.
+        </p>
+      </>
+    )
+  }
+
+  if (phase === 'error') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa tạo được bộ câu hỏi</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>{errMsg}</p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={load}>Thử lại</button>
+        </div>
+      </>
+    )
+  }
+
+  if (phase === 'intro') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Luyện điểm yếu của tôi</h2>
+        <div style={practiceStyles.card}>
+          <div style={{ fontSize: fs(14), fontWeight: '700', marginBottom: '8px' }}>Vì sao AI chọn bài này?</div>
+          {plan.map((s) => (
+            <div key={s.id} style={{ marginBottom: '10px' }}>
+              <div style={{ fontSize: fs(14), fontWeight: '600' }}>{s.label}</div>
+              <div style={{ fontSize: fs(12), color: 'var(--text-muted)', lineHeight: 1.5 }}>{s.reason}</div>
+            </div>
+          ))}
+          <div style={{ fontSize: fs(12), color: 'var(--text-muted)', lineHeight: 1.5, borderTop: '1px solid var(--border-soft)', paddingTop: '10px' }}>
+            Bộ gồm {total} câu. Độ khó thay đổi theo từng câu: bạn trả lời đúng thì câu sau khó hơn, sai thì dễ hơn.
+          </div>
+        </div>
+        <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+            <Icon name="back" size={16} /> Quay lại
+          </button>
+          <button className="qprimary" style={quizStyles.primary} onClick={start}>
+            Bắt đầu <Icon name="next" size={16} />
+          </button>
+        </div>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    const okCount = asked.filter((a) => a.correct).length
+    const bySkill = {}
+    asked.forEach((a) => {
+      const e = bySkill[a.skillLabel] || { n: 0, ok: 0 }
+      e.n++
+      if (a.correct) e.ok++
+      bySkill[a.skillLabel] = e
+    })
+    return wrap(
+      <>
+        <h2 style={styles.question}>Kết quả</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{okCount}/{asked.length}</div>
+        <div style={{ ...practiceStyles.card, maxWidth: '420px' }}>
+          {Object.entries(bySkill).map(([label, e]) => (
+            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: fs(14), padding: '4px 0' }}>
+              <span>{label}</span>
+              <strong>{e.ok}/{e.n} đúng</strong>
+            </div>
+          ))}
+          <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginTop: '8px' }}>
+            Kết quả đã được cộng vào bản đồ kỹ năng trong mục Tiến bộ.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={load}>Bộ mới</button>
+        </div>
+      </>
+    )
+  }
+
+  const q = current.q
+  const answered = phase === 'answered'
+
+  return wrap(
+    <>
+      <ProgressDots current={asked.length + (answered ? 0 : 1)} total={total} />
+      <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
+        Câu {Math.min(asked.length + (answered ? 0 : 1), total)}/{total}
+      </p>
+      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <span style={quizStyles.tag}>{q.skillLabel}</span>
+        <span style={{ ...quizStyles.tag, background: 'var(--surface-soft)', color: 'var(--text-soft)' }}>
+          {DIFF_LABEL[q.difficulty]}
+        </span>
+      </div>
+      {!answered && asked.length > 0 && note && (
+        <p style={{ margin: 0, fontSize: fs(12), color: 'var(--text-muted)' }}>{note}</p>
+      )}
+
+      <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
+
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+        {answered && (
+          <button className="qprimary" style={quizStyles.primary} onClick={next}>
+            {asked.length >= total ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
 function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRefresh, onExit }) {
   const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz
   const [quiz, setQuiz] = useState(null)
@@ -1438,6 +1730,17 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
   }
 
   if (mode === 'quiz' && quiz) {
+        if (quiz.adaptive) {
+      return (
+        <AdaptiveQuizScreen
+          profileId={profileId}
+          profile={profile}
+          cefrLevel={cefrLevel}
+          count={quiz.count}
+          onExit={() => setMode('setup')}
+        />
+      )
+    }
     return (
       <QuizScreen
         profileId={profileId}
@@ -1775,14 +2078,8 @@ function ProgressScreen({ profileId, profile, onExit }) {
         <p style={{ margin: '6px 0 0', fontSize: fs(13), color: 'var(--text-muted)' }}>Tính theo tuần, bắt đầu từ thứ Hai</p>
       </div>
 
+      {/* Lưới bốn thẻ số */}
       <div style={{ ...progressStyles.stats, maxWidth: '640px' }}>
-        <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
-        <div style={progressStyles.cardTitle}>Bản đồ kỹ năng</div>
-        <div style={progressStyles.cardSub}>
-          Điểm làm chủ = tỷ lệ đúng trong quiz và ôn lỗi gần đây (tối đa 20 câu mỗi kỹ năng, có làm mượt). Kỹ năng dưới 3 câu chưa được tính (hiện vòng rỗng). Nhãn kỹ năng do AI gán nên có thể có sai số.
-        </div>
-        <SkillMap skills={data.skills || []} />
-      </div>
         <div style={progressStyles.stat}>
           <div style={progressStyles.statNum}>{totals.messages}</div>
           <div style={progressStyles.statLabel}>tin nhắn đã gửi</div>
@@ -1799,6 +2096,16 @@ function ProgressScreen({ profileId, profile, onExit }) {
           <div style={progressStyles.statNum}>{totals.mastered}/{totals.mistakes}</div>
           <div style={progressStyles.statLabel}>lỗi đã nhớ vững (ôn đúng từ 7 ngày)</div>
         </div>
+      </div>
+     
+
+      
+      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
+        <div style={progressStyles.cardTitle}>Bản đồ kỹ năng</div>
+        <div style={progressStyles.cardSub}>
+          Điểm làm chủ = tỷ lệ đúng trong quiz và ôn lỗi gần đây (tối đa 20 câu mỗi kỹ năng, có làm mượt). Kỹ năng dưới 3 câu chưa được tính (hiện vòng rỗng). Nhãn kỹ năng do AI gán nên có thể có sai số.
+        </div>
+        <SkillMap skills={data.skills || []} />
       </div>
 
       <div style={{ ...progressStyles.card, maxWidth: '640px' }}>

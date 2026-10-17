@@ -62,8 +62,8 @@ async function generateWithVllm(params, maxRetries = 2) {
     model: VLLM_MODEL,
     messages: toMessages(params.contents),
     stream: false,
-    temperature: 0.4,
-    max_tokens: 1500,
+    temperature: params.temperature ?? 0.4,
+    max_tokens: params.maxTokens || 1500,
     chat_template_kwargs: { enable_thinking: false } // tắt chế độ "suy nghĩ" để trả lời nhanh, gọn
   }
   if (params.json !== false) body.response_format = { type: 'json_object' }
@@ -92,6 +92,7 @@ async function generateWithVllm(params, maxRetries = 2) {
       }
       const data = await res.json()
       let text = data?.choices?.[0]?.message?.content || ''
+      if (data?.choices?.[0]?.finish_reason === 'length') console.warn('LLM: trả lời bị cắt vì hết max_tokens')
       text = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim() // phòng khi model vẫn in phần suy nghĩ
       return { text }
     } catch (error) {
@@ -115,7 +116,10 @@ async function generateWithGemini(params, maxRetries = 4) {
     logError('llm-config', err)
     throw err
   }
-  const config = params.json !== false ? { responseMimeType: 'application/json' } : undefined
+    const config = {
+    ...(params.json !== false ? { responseMimeType: 'application/json' } : {}),
+    ...(params.temperature != null ? { temperature: params.temperature } : {})
+  }
   for (let i = 0; i <= maxRetries; i++) {
     try {
       return await ai.models.generateContent({ model: GEMINI_MODEL, contents: params.contents, config })
@@ -223,6 +227,128 @@ function skillFromCategory(cat) {
   for (const [id, re] of SKILL_RULES) if (re.test(c)) return id
   return 'other'
 }
+
+function normalizeQuizQuestions(raw, allowedSkills) {
+  const out = []
+  const seen = new Set()
+  for (const q of raw || []) {
+    const options = Array.isArray(q?.options)
+      ? q.options.map((o) => String(o ?? '').trim()).filter(Boolean)
+      : []
+    if (!q?.question || options.length < 3) continue
+    if (new Set(options.map((o) => o.toLowerCase())).size !== options.length) continue
+
+    const ansText = String(q.answer ?? '').trim().toLowerCase()
+    let idx = options.findIndex((o) => o.toLowerCase() === ansText)
+    if (idx < 0 && Number.isInteger(q.answer) && q.answer >= 0 && q.answer < options.length) idx = q.answer
+    if (idx < 0) continue
+
+    const text = String(q.question).trim()
+    if (seen.has(text.toLowerCase())) continue
+    seen.add(text.toLowerCase())
+
+    const correctText = options[idx]
+    const mixed = shuffle(options)
+    const skill = SKILL_IDS.includes(q.skill) ? q.skill : allowedSkills[0] || 'other'
+    out.push({
+      question: text,
+      options: mixed,
+      answer: mixed.indexOf(correctText),
+      explanation: String(q.explanation ?? '').trim(),
+      skill,
+      skillLabel: SKILL_BY_ID[skill]?.label || 'Khác',
+      difficulty: ['easy', 'medium', 'hard'].includes(q.difficulty) ? q.difficulty : 'medium'
+    })
+  }
+  return out
+}
+
+// Gỡ các câu hỏi hoàn chỉnh từ chuỗi JSON bị cắt dở hoặc sai cú pháp ở giữa
+function salvageQuestions(text) {
+  const clean = String(text || '').replace(/```json|```/g, '').trim()
+  try {
+    const parsed = JSON.parse(clean)
+    return Array.isArray(parsed) ? parsed : parsed.questions || []
+  } catch {
+    // tiếp tục gỡ từng đối tượng
+  }
+  const qPos = clean.indexOf('"questions"')
+  const start = clean.indexOf('[', qPos >= 0 ? qPos : 0)
+  if (start < 0) return []
+
+  const out = []
+  let depth = 0
+  let inStr = false
+  let esc = false
+  let objStart = -1
+  for (let i = start + 1; i < clean.length; i++) {
+    const ch = clean[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') {
+      inStr = true
+    } else if (ch === '{') {
+      if (depth === 0) objStart = i
+      depth++
+    } else if (ch === '}') {
+      depth = Math.max(0, depth - 1)
+      if (depth === 0 && objStart >= 0) {
+        try {
+          out.push(JSON.parse(clean.slice(objStart, i + 1)))
+        } catch {
+          // bỏ qua câu bị lỗi, giữ các câu còn lại
+        }
+        objStart = -1
+      }
+    }
+  }
+  return out
+}
+
+const tokenSet = (s) => new Set(normalizeAnswer(s).split(' ').filter((w) => w.length > 1))
+
+// Hai câu giống nhau từ 60% số từ trở lên thì coi là na ná
+function isSimilar(a, b) {
+  const A = tokenSet(a)
+  const B = tokenSet(b)
+  if (A.size === 0 || B.size === 0) return false
+  let inter = 0
+  A.forEach((w) => {
+    if (B.has(w)) inter++
+  })
+  return inter / (A.size + B.size - inter) >= 0.6
+}
+
+const recentQuestions = (profileId, limit = 150) =>
+  db.prepare(`SELECT question FROM quiz_history WHERE profile_id = ? ORDER BY id DESC LIMIT ?`)
+    .all(profileId, limit)
+    .map((r) => r.question)
+
+// Tách câu mới với câu trùng/na ná câu đã hỏi (hoặc trùng nhau trong cùng bộ)
+function splitFresh(questions, history) {
+  const fresh = []
+  const dupes = []
+  const seen = [...history]
+  for (const q of questions) {
+    if (seen.some((h) => isSimilar(h, q.question))) dupes.push(q)
+    else {
+      fresh.push(q)
+      seen.push(q.question)
+    }
+  }
+  return { fresh, dupes }
+}
+
+const QUIZ_THEMES = [
+  'du lịch', 'văn phòng', 'gia đình', 'ẩm thực', 'công nghệ', 'thể thao', 'mua sắm',
+  'trường học', 'thời tiết', 'âm nhạc', 'phim ảnh', 'thiên nhiên', 'giao thông', 'bạn bè'
+]
+const randomThemes = (k = 5) => shuffle(QUIZ_THEMES).slice(0, k).join(', ')
+const avoidLines = (hist) => hist.slice(0, 12).map((q) => `- ${cleanText(q, 90)}`).join('\n')
 
 // Gán kỹ năng cho các lỗi cũ chưa có (chạy một lần khi khởi động, những lần sau không còn dòng nào)
 function backfillSkills() {
@@ -332,17 +458,20 @@ function buildProgress(profileId) {
     if (i !== undefined) weeks[i][field]++
   }
 
+    // 1) Tin nhắn: chỉ lấy ngày
   db.prepare(`
     SELECT date(created_at, 'localtime') AS day FROM chat_messages
     WHERE profile_id = ? AND role = 'user' AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
   `).all(profileId).forEach((r) => bump(r.day, 'messages'))
 
+  // 2) Lỗi sai: cần category và skill
   const mistakeRows = db.prepare(`
-    SELECT category, skill, date(created_at, 'localtime') AS day
+    SELECT category, skill, date(created_at, 'localtime') AS day FROM mistakes
     WHERE profile_id = ? AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
   `).all(profileId)
   mistakeRows.forEach((r) => bump(r.day, 'mistakes'))
 
+  // 3) Từ vựng: chỉ lấy ngày
   db.prepare(`
     SELECT date(created_at, 'localtime') AS day FROM vocabulary
     WHERE profile_id = ? AND date(created_at, 'localtime') >= date('now', 'localtime', '-60 days')
@@ -1004,13 +1133,22 @@ Quy tắc:
   })
 
   // ===== Spaced repetition =====
-
-  ipcMain.handle('record-skill-event', async (event, { profileId, skill, correct, source }) => {
+  ipcMain.handle('record-skill-event', async (event, { profileId, skill, correct, source, question }) => {
     try {
       if (!SKILL_IDS.includes(skill)) return { success: false }
       db.prepare(`
         INSERT INTO skill_events (profile_id, skill, correct, source) VALUES (?, ?, ?, ?)
       `).run(profileId, skill, correct ? 1 : 0, source || 'quiz')
+      if (question) {
+        db.prepare(`INSERT INTO quiz_history (profile_id, question, skill) VALUES (?, ?, ?)`)
+          .run(profileId, cleanText(question, 300), skill)
+        // giữ tối đa 500 câu gần nhất cho mỗi tài khoản
+        db.prepare(`
+          DELETE FROM quiz_history WHERE profile_id = ? AND id NOT IN (
+            SELECT id FROM quiz_history WHERE profile_id = ? ORDER BY id DESC LIMIT 500
+          )
+        `).run(profileId, profileId)
+      }
       return { success: true }
     } catch (error) {
       console.error('DB error:', error)
@@ -1023,7 +1161,7 @@ Quy tắc:
       const n = Math.min(10, Math.max(3, parseInt(count, 10) || 5))
       const p = getProfile(cefrLevel)
       const type = topic?.type || 'random'
-
+      const history = recentQuestions(profileId)
       const randomFocus =
         'Chủ đề ngẫu nhiên: trộn đều ngữ pháp (thì, giới từ, mạo từ, câu điều kiện...), từ vựng và cụm từ thông dụng.'
       let focus = ''
@@ -1058,12 +1196,15 @@ Quy tắc:
       }
 
       const response = await generateWithRetry({
-        maxTokens: 2500,
-        contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo ${n} câu hỏi trắc nghiệm cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
+        maxTokens: 3200,
+        temperature: 0.9,
+        contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo ${n + 3} câu hỏi trắc nghiệm cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
 ${focus}
 
 Quy tắc:
 - Câu hỏi và các lựa chọn viết bằng ${targetLanguage}, độ khó phù hợp: ${p.style}
+- Mỗi câu một bối cảnh khác nhau, ví dụ: ${randomThemes()}.
+${history.length ? `- Học viên đã làm các câu sau, KHÔNG lặp lại và không diễn đạt lại:\n${avoidLines(history)}` : ''}
 - Mỗi câu có đúng 4 lựa chọn, CHỈ MỘT lựa chọn đúng; 3 lựa chọn sai phải hợp lý (là lỗi người học hay mắc), không quá vô lý.
 - Đa dạng dạng câu: điền vào chỗ trống (dùng ___), chọn câu đúng ngữ pháp, chọn từ phù hợp nghĩa.
 - Không trùng ý giữa các câu.
@@ -1073,8 +1214,7 @@ Quy tắc:
   Trả lời CHỈ bằng JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","skill":"tense","explanation":"..."}]}`
       })
 
-      const parsed = JSON.parse(response.text.replace(/```json|```/g, '').trim())
-      const raw = Array.isArray(parsed) ? parsed : parsed.questions
+      const raw = salvageQuestions(response.text)
 
       const questions = []
       for (const q of raw || []) {
@@ -1102,12 +1242,72 @@ Quy tắc:
         })
       }
 
-      if (questions.length < 3) throw new Error('Quiz: không đủ câu hỏi hợp lệ')
-      return { success: true, questions: questions.slice(0, n) }
+      const { fresh, dupes } = splitFresh(questions, history)
+      const finalList = (fresh.length >= Math.min(n, 5) ? fresh : [...fresh, ...dupes]).slice(0, n)
+      if (finalList.length < 3) throw new Error('Quiz: không đủ câu hỏi hợp lệ')
+      return { success: true, questions: finalList }
     } catch (error) {
       console.error('Quiz error:', error)
       logError('quiz', error)
       return { success: false, questions: [], message: 'AI chưa tạo được bộ câu hỏi. Bạn thử lại hoặc chọn ít câu hơn nhé.' }
+    }
+  })
+
+  ipcMain.handle('generate-adaptive-quiz', async (event, { profileId, targetLanguage, nativeLanguage, cefrLevel }) => {
+    try {
+      const p = getProfile(cefrLevel)
+      const history = recentQuestions(profileId)
+      const { skills } = buildProgress(profileId)
+
+      // Điểm "yếu" càng cao càng cần luyện. Kỹ năng chưa có điểm quiz tính ở mức trung bình, cộng thêm lỗi trong chat.
+      const weakness = (s) => {
+        const chat = Math.min(s.chatErrors, 5)
+        return s.mastery !== null ? 100 - s.mastery + chat * 4 : 50 + chat * 6
+      }
+      // Xáo trước để các kỹ năng bằng điểm được chọn ngẫu nhiên (sort ổn định)
+      const chosen = shuffle(skills).sort((a, b) => weakness(b) - weakness(a)).slice(0, 3)
+
+      const reasonOf = (s) => {
+        if (s.mastery !== null) {
+          const chat = s.chatErrors > 0 ? `, ${s.chatErrors} lỗi trong chat 30 ngày qua` : ''
+          return `Điểm làm chủ ${s.mastery}/100 (${s.correct}/${s.total} câu đúng gần đây)${chat}`
+        }
+        if (s.chatErrors > 0) return `${s.chatErrors} lỗi trong chat 30 ngày qua, chưa đủ câu quiz để chấm điểm`
+        return 'Chưa có dữ liệu về kỹ năng này, bài này giúp AI hiểu điểm mạnh yếu của bạn'
+      }
+      const plan = chosen.map((s) => ({ id: s.id, label: s.label, reason: reasonOf(s) }))
+      const info = getLearnerLine(profileId)
+
+      const response = await generateWithRetry({
+        maxTokens: 4500,
+        temperature: 0.9,
+        contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo bộ câu hỏi trắc nghiệm thích ứng cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
+
+Học viên đang yếu 3 kỹ năng sau. Tạo đúng 4 câu cho MỖI kỹ năng:
+${chosen.map((s) => `- ${s.id}: ${s.label}`).join('\n')}
+
+  Mỗi kỹ năng gồm: 1 câu "easy" (dễ hơn trình độ một bậc), 2 câu "medium" (đúng trình độ), 1 câu "hard" (khó hơn trình độ một bậc). Độ khó theo trình độ: ${p.style}
+
+Quy tắc:
+- Câu hỏi và các lựa chọn viết bằng ${targetLanguage}.
+- Mỗi câu có đúng 4 lựa chọn, CHỈ MỘT lựa chọn đúng; 3 lựa chọn sai phải hợp lý (là lỗi người học hay mắc).
+- Đa dạng dạng câu: điền vào chỗ trống (dùng ___), chọn câu đúng ngữ pháp, chọn từ phù hợp nghĩa. Không trùng ý giữa các câu.
+- "skill" là mã kỹ năng ở trên, "difficulty" là easy, medium hoặc hard.
+- "answer" phải là CHÍNH XÁC nội dung của lựa chọn đúng (sao chép nguyên văn từ "options").
+- "explanation": 1 câu ngắn (tối đa 25 từ) bằng ${nativeLanguage}, giải thích vì sao đáp án đúng.
+Trả lời CHỈ bằng JSON: {"questions":[{"skill":"tense","difficulty":"easy","question":"...","options":["...","...","...","..."],"answer":"...","explanation":"..."}]}`
+      })
+
+      const raw = salvageQuestions(response.text)
+      const questions = normalizeQuizQuestions(raw, chosen.map((s) => s.id))
+      const { fresh, dupes } = splitFresh(questions, history)
+      const pool = fresh.length >= 8 ? fresh : [...fresh, ...dupes]
+      if (pool.length < 6) throw new Error(`Adaptive quiz: chỉ có ${pool.length} câu hợp lệ`)
+      return { success: true, plan, questions: pool }
+    } catch (error) {
+      console.error('Adaptive quiz error:', error)
+      logError('adaptive-quiz', error)
+      return { success: false, message: 'AI chưa tạo được bộ câu hỏi. Bạn thử lại nhé.' }
     }
   })
 
