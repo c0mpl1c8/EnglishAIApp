@@ -29,6 +29,13 @@ const api = {
   getProgressInsight: (data) => ipcRenderer.invoke('get-progress-insight', data),
   recordSkillEvent: (data) => ipcRenderer.invoke('record-skill-event', data),
   generateAdaptiveQuiz: (data) => ipcRenderer.invoke('generate-adaptive-quiz', data),
+  getVocabFolders: (data) => ipcRenderer.invoke('get-vocab-folders', data),
+  createVocabFolder: (data) => ipcRenderer.invoke('create-vocab-folder', data),
+  renameVocabFolder: (data) => ipcRenderer.invoke('rename-vocab-folder', data),
+  deleteVocabFolder: (data) => ipcRenderer.invoke('delete-vocab-folder', data),
+  moveVocabWords: (data) => ipcRenderer.invoke('move-vocab-words', data),
+  deleteVocabWords: (data) => ipcRenderer.invoke('delete-vocab-words', data),
+  aiOrganizeVocabulary: (data) => ipcRenderer.invoke('ai-organize-vocabulary', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

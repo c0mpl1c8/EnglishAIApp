@@ -998,7 +998,175 @@ Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. T
     }
   })
 
-  ipcMain.handle('add-vocabulary-words', async (event, { profileId, words, targetLanguage, nativeLanguage, cefrLevel }) => {
+  // ===== Thư mục từ vựng =====
+  ipcMain.handle('get-vocab-folders', async (event, { profileId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT id, name FROM vocab_folders WHERE profile_id = ? ORDER BY name COLLATE NOCASE
+      `).all(profileId)
+      return { success: true, folders: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, folders: [] }
+    }
+  })
+
+  ipcMain.handle('create-vocab-folder', async (event, { profileId, name }) => {
+    try {
+      const n = cleanText(name, 40)
+      if (!n) return { success: false, error: 'empty' }
+      const exists = db.prepare(`SELECT id FROM vocab_folders WHERE profile_id = ? AND name = ? COLLATE NOCASE`).get(profileId, n)
+      if (exists) return { success: false, error: 'exists' }
+      const r = db.prepare(`INSERT INTO vocab_folders (profile_id, name) VALUES (?, ?)`).run(profileId, n)
+      return { success: true, id: Number(r.lastInsertRowid) }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, error: 'db_error' }
+    }
+  })
+
+  ipcMain.handle('rename-vocab-folder', async (event, { profileId, folderId, name }) => {
+    try {
+      const n = cleanText(name, 40)
+      if (!n) return { success: false, error: 'empty' }
+      const dup = db.prepare(`
+        SELECT id FROM vocab_folders WHERE profile_id = ? AND name = ? COLLATE NOCASE AND id != ?
+      `).get(profileId, n, folderId)
+      if (dup) return { success: false, error: 'exists' }
+      db.prepare(`UPDATE vocab_folders SET name = ? WHERE id = ? AND profile_id = ?`).run(n, folderId, profileId)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, error: 'db_error' }
+    }
+  })
+
+  ipcMain.handle('delete-vocab-folder', async (event, { profileId, folderId }) => {
+    try {
+      // Thẻ trong thư mục không bị xoá, chỉ quay về "Chưa phân loại"
+      db.prepare(`UPDATE vocabulary SET folder_id = NULL WHERE folder_id = ? AND profile_id = ?`).run(folderId, profileId)
+      db.prepare(`DELETE FROM vocab_folders WHERE id = ? AND profile_id = ?`).run(folderId, profileId)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('move-vocab-words', async (event, { profileId, wordIds, folderId }) => {
+    try {
+      const ids = (wordIds || []).map(Number).filter(Number.isInteger)
+      if (ids.length === 0) return { success: false }
+      if (folderId != null) {
+        const f = db.prepare(`SELECT id FROM vocab_folders WHERE id = ? AND profile_id = ?`).get(folderId, profileId)
+        if (!f) return { success: false }
+      }
+      const marks = ids.map(() => '?').join(',')
+      db.prepare(`UPDATE vocabulary SET folder_id = ? WHERE profile_id = ? AND id IN (${marks})`)
+        .run(folderId ?? null, profileId, ...ids)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('delete-vocab-words', async (event, { profileId, wordIds }) => {
+    try {
+      const ids = (wordIds || []).map(Number).filter(Number.isInteger)
+      if (ids.length === 0) return { success: false }
+      const marks = ids.map(() => '?').join(',')
+      db.prepare(`DELETE FROM vocabulary WHERE profile_id = ? AND id IN (${marks})`).run(profileId, ...ids)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('ai-organize-vocabulary', async (event, { profileId, nativeLanguage, targetLanguage }) => {
+    try {
+      const CHUNK = 50
+      const MAX_CHUNKS = 3
+      let list = db.prepare(`
+        SELECT id, word, meaning FROM vocabulary WHERE profile_id = ? AND folder_id IS NULL ORDER BY id DESC
+      `).all(profileId)
+      const total = list.length
+      if (total === 0) return { success: true, moved: 0, created: 0, foldersUsed: 0, remaining: 0 }
+
+      let moved = 0
+      let created = 0
+      const used = new Set()
+      const findFolder = db.prepare(`SELECT id FROM vocab_folders WHERE profile_id = ? AND name = ? COLLATE NOCASE`)
+      const insFolder = db.prepare(`INSERT INTO vocab_folders (profile_id, name) VALUES (?, ?)`)
+      const moveWord = db.prepare(`UPDATE vocabulary SET folder_id = ? WHERE id = ? AND profile_id = ? AND folder_id IS NULL`)
+
+      for (let c = 0; c < MAX_CHUNKS && list.length > 0; c++) {
+        const chunk = list.slice(0, CHUNK)
+        list = list.slice(CHUNK)
+        try {
+          const folders = db.prepare(`SELECT name FROM vocab_folders WHERE profile_id = ?`).all(profileId)
+          const response = await generateWithRetry({
+            maxTokens: 2500,
+            temperature: 0.3,
+            contents: `Bạn là trợ lý sắp xếp từ vựng ${targetLanguage} cho học viên có tiếng mẹ đẻ là ${nativeLanguage}.
+Hãy phân loại các từ dưới đây vào các thư mục theo CHỦ ĐỀ (ví dụ: Công nghệ, Nấu ăn, Du lịch, Công việc, Gia đình, Sức khoẻ...).
+
+Thư mục đã có (ưu tiên dùng lại nếu hợp chủ đề): ${folders.length ? folders.map((f) => `"${f.name}"`).join(', ') : '(chưa có)'}
+
+Danh sách từ (id | từ | nghĩa):
+${chunk.map((w) => `${w.id} | ${cleanText(w.word, 40)} | ${cleanText(w.meaning, 60)}`).join('\n')}
+
+Quy tắc:
+- Mỗi từ vào đúng MỘT thư mục.
+- Tên thư mục ngắn gọn (tối đa 3 từ, bằng ${nativeLanguage}), theo chủ đề chứ không theo loại từ.
+- Chỉ tạo thư mục mới khi không thư mục đã có nào phù hợp; tối đa 6 thư mục mới; từ lẻ loi không hợp chủ đề nào thì cho vào "Khác".
+- Dùng đúng id trong danh sách, không bịa id.
+Trả lời CHỈ bằng JSON: {"folders":[{"name":"Công nghệ","ids":[1,2,3]}]}`
+          })
+
+          const parsed = JSON.parse(response.text.replace(/```json|```/g, '').trim())
+          const groups = Array.isArray(parsed) ? parsed : parsed.folders
+          const valid = new Set(chunk.map((w) => w.id))
+          const assigned = new Set()
+          let newInChunk = 0
+
+          db.transaction(() => {
+            for (const g of groups || []) {
+              const name = cleanText(g?.name, 40)
+              const ids = (g?.ids || []).map(Number).filter((id) => valid.has(id) && !assigned.has(id))
+              if (!name || ids.length === 0) continue
+              let fid = findFolder.get(profileId, name)?.id
+              if (!fid) {
+                if (newInChunk >= 8) continue
+                fid = Number(insFolder.run(profileId, name).lastInsertRowid)
+                newInChunk++
+                created++
+              }
+              for (const id of ids) {
+                moveWord.run(fid, id, profileId)
+                assigned.add(id)
+                moved++
+              }
+              used.add(fid)
+            }
+          })()
+        } catch (err) {
+          logError('vocab-organize', err)
+          if (c === 0) throw err // lượt đầu thất bại thì báo lỗi; lượt sau thất bại thì giữ kết quả đã có
+          break
+        }
+      }
+
+      return { success: true, moved, created, foldersUsed: used.size, remaining: Math.max(0, total - moved) }
+    } catch (error) {
+      console.error('Organize vocab error:', error)
+      logError('vocab-organize', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('add-vocabulary-words', async (event, { profileId, words, targetLanguage, nativeLanguage, cefrLevel, folderId }) => {
     try {
       const list = [...new Set(
         String(words || '').split(/[,;\n]/).map((w) => w.trim()).filter(Boolean)
@@ -1022,12 +1190,15 @@ Trả lời CHỈ bằng một mảng JSON, cùng thứ tự với danh sách: [
       const match = text.match(/\[[\s\S]*\]/)
       const items = JSON.parse(match ? match[0] : text)
 
-      const insStmt = db.prepare(`INSERT INTO vocabulary (profile_id, word, meaning, example_sentence) VALUES (?, ?, ?, ?)`)
+           const fid = folderId
+        ? db.prepare(`SELECT id FROM vocab_folders WHERE id = ? AND profile_id = ?`).get(folderId, profileId)?.id ?? null
+        : null
+      const insStmt = db.prepare(`INSERT INTO vocabulary (profile_id, word, meaning, example_sentence, folder_id) VALUES (?, ?, ?, ?, ?)`)
       const added = []
       for (const v of items) {
         const word = v && v.word != null ? String(v.word).trim() : ''
         if (!word || checkStmt.get(profileId, word)) continue
-        insStmt.run(profileId, word, String(v.meaning ?? ''), String(v.example ?? ''))
+        insStmt.run(profileId, word, String(v.meaning ?? ''), String(v.example ?? ''), fid)
         added.push(word)
       }
       return { success: true, added, skipped }

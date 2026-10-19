@@ -116,5 +116,13 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
-
+db.exec(`
+  CREATE TABLE IF NOT EXISTS vocab_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    name TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+addColumnIfMissing('vocabulary', 'folder_id', 'INTEGER')
 export default db

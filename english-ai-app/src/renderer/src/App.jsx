@@ -91,6 +91,8 @@ const iconPaths = {
   chevron: ['m6 9 6 6 6-6'],
   sparkle: ['M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z'],
   trend: ['m22 7-8.5 8.5-5-5L2 17', 'M16 7h6v6'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  search: ['M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16z', 'm21 21-4.3-4.3'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
   edit: ['M12 20h9', 'M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z'],
@@ -390,7 +392,7 @@ const onboardStyles = {
     flexDirection: 'column',
     gap: '3px'
   },
-  levelCardActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
+  levelCardActive: { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)' },
   levelCode: { fontSize: fs(15), fontWeight: '700' },
   levelDesc: { fontSize: fs(11), color: 'var(--text-muted)', lineHeight: 1.35 },
   levelBar: { display: 'inline-flex', alignItems: 'center', gap: '8px' },
@@ -601,7 +603,7 @@ const quizStyles = {
     textAlign: 'left',
     boxSizing: 'border-box'
   },
-  modeRowActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)' },
+  modeRowActive: { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)' },
   modeIcon: {
     width: '34px',
     height: '34px',
@@ -625,7 +627,7 @@ const quizStyles = {
     flexShrink: 0,
     color: '#ffffff'
   },
-  radioOn: { background: 'var(--accent)', borderColor: 'var(--accent)' },
+  radioOn: { background: 'var(--accent)', border: '1.5px solid var(--accent)' },
   chip: {
     padding: '7px 12px',
     borderRadius: '999px',
@@ -635,7 +637,7 @@ const quizStyles = {
     fontSize: fs(13),
     cursor: 'pointer'
   },
-  chipOn: { background: 'var(--accent)', borderColor: 'var(--accent)', color: '#ffffff' },
+ chipOn: { background: 'var(--accent)', border: '1.5px solid var(--accent)', color: '#ffffff' },
   primary: {
     padding: '11px 26px',
     borderRadius: '999px',
@@ -688,10 +690,10 @@ const quizStyles = {
   },
 
   letter: { fontWeight: '700', color: 'var(--text-muted)', minWidth: '18px' },
-  correct: { borderColor: '#27ae60', background: 'rgba(39,174,96,0.12)' },
-  wrong: { borderColor: '#c0392b', background: 'rgba(192,57,43,0.12)' },
+  correct: { border: '1.5px solid #27ae60', background: 'rgba(39,174,96,0.12)' },
+  wrong: { border: '1.5px solid #c0392b', background: 'rgba(192,57,43,0.12)' },
   dim: { opacity: 0.55 },
-  chipActive: { borderColor: 'var(--accent)', background: 'var(--accent-soft)', color: 'var(--accent-text)' },
+  chipActive: { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)', color: 'var(--accent-text)' },
   disabled: { opacity: 0.45, cursor: 'not-allowed' }
 }
 
@@ -1214,7 +1216,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
           ))}
         </div>
         <input
-          style={{ ...onboardStyles.fieldInput, marginTop: '10px', ...(usingCustom ? { borderColor: 'var(--accent)' } : {}) }}
+          style={{ ...onboardStyles.fieldInput, marginTop: '10px', ...(usingCustom ? { border: '1.5px solid var(--accent)' } : {}) }}
           maxLength={80}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
@@ -2332,7 +2334,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
 }
 
 
-function AddWordBox({ profileId, profile, cefrLevel, onAdded }) {
+function AddWordBox({ profileId, profile, cefrLevel, folderId, onAdded }) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -2346,7 +2348,8 @@ function AddWordBox({ profileId, profile, cefrLevel, onAdded }) {
       words: text,
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
-      cefrLevel
+      cefrLevel,
+      folderId: folderId || null
     })
     setBusy(false)
     if (!res.success) {
@@ -2391,72 +2394,224 @@ function AddWordBox({ profileId, profile, cefrLevel, onAdded }) {
     </div>
   )
 }
-function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
-  const [list, setList] = useState([])
+
+const shuffleArr = (a) => {
+  const r = [...a]
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[r[i], r[j]] = [r[j], r[i]]
+  }
+  return r
+}
+
+const explorerCss = `
+  .vf-row { transition: background 120ms ease, border-color 120ms ease; }
+  .vf-row:hover { background: var(--surface-soft); }
+  .vf-row .vf-actions { display: none; gap: 2px; }
+  .vf-row:hover .vf-actions { display: flex; }
+  .vf-card { transition: border-color 120ms ease, background 120ms ease; }
+  .vf-card:hover { border-color: var(--accent); }
+`
+
+const exStyles = {
+  root: {
+    display: 'flex',
+    height: '100vh',
+    width: '100vw',
+    background: 'var(--bg)',
+    color: 'var(--text)',
+    fontFamily: "'Segoe UI', sans-serif",
+    fontSize: fs(16),
+    boxSizing: 'border-box'
+  },
+  side: {
+    width: '250px',
+    flexShrink: 0,
+    height: '100vh',
+    padding: '14px 12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    background: 'var(--panel)',
+    borderRight: '1px solid var(--border-soft)',
+    boxSizing: 'border-box'
+  },
+  sectionLabel: {
+    fontSize: fs(11),
+    fontWeight: '700',
+    color: 'var(--text-muted)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    padding: '10px 10px 4px'
+  },
+  row: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '9px 10px',
+    borderRadius: '10px',
+    border: '1.5px solid transparent',
+    background: 'transparent',
+    color: 'var(--text)',
+    cursor: 'pointer',
+    fontSize: fs(14),
+    textAlign: 'left',
+    boxSizing: 'border-box'
+  },
+  rowActive: { background: 'var(--accent-soft)', color: 'var(--accent-text)', fontWeight: '600' },
+  rowDrop: { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)' },
+  rowName: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  count: { fontSize: fs(11), color: 'var(--text-muted)' },
+  iconBtn: { background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '2px', display: 'flex' },
+  renameInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: '3px 6px',
+    borderRadius: '6px',
+    border: '1.5px solid var(--accent)',
+    background: 'var(--surface)',
+    color: 'var(--text)',
+    fontSize: fs(13),
+    outline: 'none'
+  },
+  main: { flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', boxSizing: 'border-box' },
+  toolbar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    padding: '16px 72px 12px 20px',
+    borderBottom: '1px solid var(--border-soft)'
+  },
+  searchBox: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '7px 12px',
+    borderRadius: '999px',
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface)',
+    color: 'var(--text-muted)',
+    minWidth: '160px'
+  },
+  searchInput: { border: 'none', outline: 'none', background: 'transparent', color: 'var(--text)', fontSize: fs(13), width: '140px' },
+  selBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    flexWrap: 'wrap',
+    padding: '8px 72px 8px 20px',
+    background: 'var(--accent-soft)',
+    borderBottom: '1px solid var(--border-soft)',
+    fontSize: fs(13)
+  },
+  grid: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '16px 20px 28px',
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+    gridAutoRows: 'min-content',
+    alignContent: 'start',
+    gap: '12px'
+  },
+  card: {
+    padding: '12px 14px',
+    borderRadius: '14px',
+    border: '1.5px solid var(--border-soft)',
+    background: 'var(--surface)',
+    cursor: 'pointer',
+    userSelect: 'none',
+    textAlign: 'left',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    minHeight: '92px',
+    boxSizing: 'border-box'
+  },
+  cardSel: { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)' },
+  cardWord: { fontSize: fs(16), fontWeight: '700', color: 'var(--text-strong)', wordBreak: 'break-word' },
+  cardMeaning: {
+    fontSize: fs(12),
+    color: 'var(--text-muted)',
+    display: '-webkit-box',
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden'
+  },
+  tag: {
+    alignSelf: 'flex-start',
+    marginTop: 'auto',
+    padding: '2px 8px',
+    borderRadius: '999px',
+    background: 'var(--surface-soft)',
+    border: '1px solid var(--border-soft)',
+    fontSize: fs(10),
+    color: 'var(--text-soft)'
+  },
+  toast: {
+    position: 'absolute',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 16px',
+    borderRadius: '12px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border)',
+    boxShadow: 'var(--shadow)',
+    fontSize: fs(13),
+    zIndex: 50,
+    maxWidth: '80%'
+  },
+  empty: { gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)', fontSize: fs(14), padding: '48px 16px', lineHeight: 1.6 }
+}
+
+function VocabStudy({ cards, title, speakLang, onBack }) {
+  const [list, setList] = useState(cards)
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
-  const [loading, setLoading] = useState(true)
 
-  const loadVocabulary = async () => {
-    const res = await window.api.getVocabulary({ profileId })
-    setList(res.vocabulary || [])
-    setLoading(false)
+  const go = (d) => {
+    if (list.length === 0) return
+    setFlipped(false)
+    setIndex((i) => (i + d + list.length) % list.length)
   }
-
-  useEffect(() => {
-    loadVocabulary()
-  }, [])
-
-  const handleAdded = async () => {
-    await loadVocabulary()
-    setIndex(0) // từ mới nằm đầu danh sách
+  const mix = () => {
+    setList(shuffleArr(list))
+    setIndex(0)
     setFlipped(false)
   }
 
-  const wrap = (children) => (
-    <div style={styles.container} className="fade-in">
-      <style>{fadeStyle}</style>
-      {children}
-    </div>
-  )
-
-  if (loading) return wrap(<p>Đang tải từ vựng...</p>)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowRight') go(1)
+      else if (e.key === 'ArrowLeft') go(-1)
+      else if (e.key === ' ') {
+        e.preventDefault()
+        setFlipped((f) => !f)
+      } else if (e.key === 'Escape') onBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   if (list.length === 0) {
-    return wrap(
-      <>
-        <h2 style={styles.question}>Chưa có từ vựng nào</h2>
-        <p style={{ color: 'var(--text-muted)', maxWidth: '380px' }}>
-          Trò chuyện với AI để tự ghi lại từ hay gặp, hoặc tự thêm từ bên dưới.
-        </p>
-        <AddWordBox
-          profileId={profileId}
-          profile={profile}
-          cefrLevel={cefrLevel}
-          onAdded={handleAdded}
-        />
-        <button style={styles.button} onClick={onExit}>Quay lại</button>
-      </>
+    return (
+      <div style={styles.container}>
+        <h2 style={styles.question}>Không có thẻ để học</h2>
+        <button className="qprimary" style={quizStyles.primary} onClick={onBack}>Quay lại</button>
+      </div>
     )
   }
 
   const card = list[index]
-  const next = () => {
-    setFlipped(false)
-    setIndex((i) => (i + 1) % list.length)
-  }
-  const prev = () => {
-    setFlipped(false)
-    setIndex((i) => (i - 1 + list.length) % list.length)
-  }
-   const speakLang = toSpeechLang(profile?.targetLanguage)
-    return wrap(
-    <>
+  return (
+    <div style={styles.container}>
+      <style>{quizCss}</style>
       <div>
-        <h2 style={styles.question}>Flashcard từ vựng</h2>
-        <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: fs(14) }}>
-          {list.length} từ đã lưu
-        </p>
+        <h2 style={styles.question}>{title}</h2>
+        <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: fs(14) }}>{list.length} thẻ · phím ← → để chuyển, Space để lật</p>
       </div>
 
       <div style={vocabStyles.card} onClick={() => setFlipped(!flipped)} role="button" tabIndex={0}>
@@ -2470,18 +2625,13 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
         >
           <Icon name="speaker" size={16} />
         </button>
-
         {!flipped ? (
-          <div style={{ fontSize: fs(34), fontWeight: '700', color: 'var(--text-strong)' }}>
-            {card.word}
-          </div>
+          <div style={{ fontSize: fs(34), fontWeight: '700', color: 'var(--text-strong)' }}>{card.word}</div>
         ) : (
           <>
             <div style={{ fontSize: fs(22), fontWeight: '600' }}>{card.meaning}</div>
             {card.example_sentence && (
-              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic', maxWidth: '400px' }}>
-                "{card.example_sentence}"
-              </div>
+              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic', maxWidth: '400px' }}>"{card.example_sentence}"</div>
             )}
           </>
         )}
@@ -2489,31 +2639,547 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-        <button style={vocabStyles.navBtn} onClick={prev} title="Từ trước" aria-label="Từ trước">
-          <Icon name="back" size={18} />
-        </button>
-        <span style={{ minWidth: '60px', textAlign: 'center', fontSize: fs(14), color: 'var(--text-muted)' }}>
-          {index + 1} / {list.length}
-        </span>
-        <button style={vocabStyles.navBtn} onClick={next} title="Từ tiếp theo" aria-label="Từ tiếp theo">
-          <Icon name="next" size={18} />
-        </button>
+        <button style={vocabStyles.navBtn} onClick={() => go(-1)} aria-label="Thẻ trước"><Icon name="back" size={18} /></button>
+        <span style={{ minWidth: '60px', textAlign: 'center', fontSize: fs(14), color: 'var(--text-muted)' }}>{index + 1} / {list.length}</span>
+        <button style={vocabStyles.navBtn} onClick={() => go(1)} aria-label="Thẻ sau"><Icon name="next" size={18} /></button>
       </div>
 
-      <AddWordBox
-        profileId={profileId}
-        profile={profile}
-        cefrLevel={cefrLevel}
-        onAdded={handleAdded}
-      />
-
-      <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
-        <Icon name="back" size={16} /> Thoát
-      </button>
-    </>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onBack}><Icon name="back" size={16} /> Quay lại</button>
+        <button className="qghost" style={quizStyles.ghost} onClick={mix}><Icon name="repeat" size={16} /> Xáo trộn</button>
+      </div>
+    </div>
   )
 }
 
+function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
+  const [words, setWords] = useState([])
+  const [folders, setFolders] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [current, setCurrent] = useState('all') // 'all' | 'none' | id thư mục
+  const [selected, setSelected] = useState(new Set())
+  const [search, setSearch] = useState('')
+  const [detail, setDetail] = useState(null)
+  const [confirm, setConfirm] = useState(null) // { kind: 'words' | 'folder', ids?, id?, name? }
+  const [showAdd, setShowAdd] = useState(false)
+  const [mode, setMode] = useState('explorer')
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [renaming, setRenaming] = useState(null) // { id, name }
+  const [dropKey, setDropKey] = useState(null)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [toast, setToast] = useState('')
+  const dragIds = useRef([])
+  const speakLang = toSpeechLang(profile?.targetLanguage)
+
+  const flash = (msg) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 4000)
+  }
+
+  const reload = async () => {
+    const [w, f] = await Promise.all([
+      window.api.getVocabulary({ profileId }),
+      window.api.getVocabFolders({ profileId })
+    ])
+    setWords(w.vocabulary || [])
+    setFolders(f.folders || [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    reload()
+  }, [])
+
+  // ----- dữ liệu suy ra -----
+  const counts = {}
+  let unclassified = 0
+  words.forEach((w) => {
+    if (w.folder_id) counts[w.folder_id] = (counts[w.folder_id] || 0) + 1
+    else unclassified++
+  })
+  const folderName = (id) => folders.find((f) => f.id === id)?.name
+  const inScope = words.filter((w) =>
+    current === 'all' ? true : current === 'none' ? !w.folder_id : w.folder_id === current
+  )
+  const q = search.trim().toLowerCase()
+  const visible = q
+    ? inScope.filter((w) => w.word.toLowerCase().includes(q) || String(w.meaning || '').toLowerCase().includes(q))
+    : inScope
+  const title = current === 'all' ? 'Tất cả từ vựng' : current === 'none' ? 'Chưa phân loại' : folderName(current) || 'Thư mục'
+  const folderOptions = [{ value: 'none', label: 'Chưa phân loại' }, ...folders.map((f) => ({ value: f.id, label: f.name }))]
+
+  // ----- thao tác -----
+  const moveWords = async (ids, folderId) => {
+    const res = await window.api.moveVocabWords({ profileId, wordIds: ids, folderId })
+    if (res.success) {
+      await reload()
+      setSelected(new Set())
+      flash(
+        folderId
+          ? `Đã chuyển ${ids.length} thẻ vào "${folderName(folderId) || 'thư mục'}"`
+          : `Đã chuyển ${ids.length} thẻ về "Chưa phân loại"`
+      )
+    } else {
+      flash('Không chuyển được, bạn thử lại nhé.')
+    }
+  }
+
+  const createFolder = async () => {
+    const name = newName.trim()
+    if (!name) {
+      setCreating(false)
+      return
+    }
+    const res = await window.api.createVocabFolder({ profileId, name })
+    if (res.success) {
+      await reload()
+      setCurrent(res.id)
+      setCreating(false)
+      setNewName('')
+    } else {
+      flash(res.error === 'exists' ? 'Đã có thư mục tên này.' : 'Không tạo được thư mục.')
+    }
+  }
+
+  const renameFolder = async () => {
+    if (!renaming) return
+    const name = renaming.name.trim()
+    if (!name || name === folderName(renaming.id)) {
+      setRenaming(null)
+      return
+    }
+    const res = await window.api.renameVocabFolder({ profileId, folderId: renaming.id, name })
+    if (res.success) {
+      await reload()
+      setRenaming(null)
+    } else {
+      flash(res.error === 'exists' ? 'Đã có thư mục tên này.' : 'Không đổi được tên.')
+    }
+  }
+
+  const doDelete = async () => {
+    if (!confirm) return
+    if (confirm.kind === 'words') {
+      await window.api.deleteVocabWords({ profileId, wordIds: confirm.ids })
+      flash(`Đã xoá ${confirm.ids.length} thẻ`)
+    } else {
+      await window.api.deleteVocabFolder({ profileId, folderId: confirm.id })
+      if (current === confirm.id) setCurrent('all')
+      flash(`Đã xoá thư mục "${confirm.name}", các thẻ về "Chưa phân loại"`)
+    }
+    setConfirm(null)
+    setSelected(new Set())
+    setDetail(null)
+    await reload()
+  }
+
+  const aiOrganize = async () => {
+    if (aiBusy) return
+    if (unclassified === 0) {
+      flash('Không còn từ nào chưa phân loại.')
+      return
+    }
+    setAiBusy(true)
+    const res = await window.api.aiOrganizeVocabulary({
+      profileId,
+      nativeLanguage: profile.nativeLanguage,
+      targetLanguage: profile.targetLanguage
+    })
+    setAiBusy(false)
+    if (res.success) {
+      await reload()
+      flash(
+        `AI đã xếp ${res.moved} từ vào ${res.foldersUsed} thư mục (tạo mới ${res.created}).` +
+          (res.remaining ? ` Còn ${res.remaining} từ chưa xếp, bấm lại để tiếp tục.` : '')
+      )
+    } else {
+      flash('AI chưa phân loại được lúc này, bạn thử lại nhé.')
+    }
+  }
+
+  // ----- chọn thẻ và kéo thả -----
+  const onCardClick = (e, w) => {
+    e.stopPropagation()
+    const multi = e.ctrlKey || e.metaKey
+    setSelected((prev) => {
+      const next = new Set(multi ? prev : [])
+      if (multi && prev.has(w.id)) next.delete(w.id)
+      else next.add(w.id)
+      return next
+    })
+  }
+
+  const onDragStart = (e, w) => {
+    const ids = selected.has(w.id) ? [...selected] : [w.id]
+    if (!selected.has(w.id)) setSelected(new Set([w.id]))
+    dragIds.current = ids
+    e.dataTransfer.setData('text/plain', ids.join(','))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  const dropOn = async (e, target) => {
+    e.preventDefault()
+    setDropKey(null)
+    const ids = dragIds.current.length
+      ? dragIds.current
+      : e.dataTransfer.getData('text/plain').split(',').map(Number).filter(Boolean)
+    dragIds.current = []
+    if (ids.length) await moveWords(ids, target)
+  }
+
+  const dropProps = (key, target) => ({
+    onDragOver: (e) => {
+      e.preventDefault()
+      setDropKey(key)
+    },
+    onDragLeave: () => setDropKey((k) => (k === key ? null : k)),
+    onDrop: (e) => dropOn(e, target)
+  })
+
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === 'Escape') {
+        setSelected(new Set())
+        setDetail(null)
+        setConfirm(null)
+      } else if (e.key === 'Delete' && selected.size > 0 && !confirm) {
+        setConfirm({ kind: 'words', ids: [...selected] })
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        setSelected(new Set(visible.map((w) => w.id)))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  if (loading) {
+    return (
+      <div style={styles.container}>
+        <p>Đang tải từ vựng...</p>
+      </div>
+    )
+  }
+
+  if (mode === 'study') {
+    return <VocabStudy cards={visible} title={title} speakLang={speakLang} onBack={() => setMode('explorer')} />
+  }
+
+  return (
+    <div style={exStyles.root}>
+      <style>{explorerCss}</style>
+      <style>{quizCss}</style>
+
+      {/* ===== Cột trái: thư mục ===== */}
+      <aside style={exStyles.side}>
+        <button className="qghost" style={{ ...quizStyles.ghost, alignSelf: 'flex-start', padding: '6px 10px' }} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+
+        <div
+          className="vf-row"
+          role="button"
+          style={{ ...exStyles.row, ...(current === 'all' ? exStyles.rowActive : {}) }}
+          onClick={() => setCurrent('all')}
+        >
+          <Icon name="cards" size={16} />
+          <span style={exStyles.rowName}>Tất cả từ</span>
+          <span style={exStyles.count}>{words.length}</span>
+        </div>
+
+        <div
+          className="vf-row"
+          role="button"
+          style={{
+            ...exStyles.row,
+            ...(current === 'none' ? exStyles.rowActive : {}),
+            ...(dropKey === 'none' ? exStyles.rowDrop : {})
+          }}
+          onClick={() => setCurrent('none')}
+          {...dropProps('none', null)}
+        >
+          <Icon name="folder" size={16} />
+          <span style={exStyles.rowName}>Chưa phân loại</span>
+          <span style={exStyles.count}>{unclassified}</span>
+        </div>
+
+        <div style={exStyles.sectionLabel}>Thư mục</div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          {folders.length === 0 && !creating && (
+            <div style={{ fontSize: fs(12), color: 'var(--text-muted)', padding: '4px 10px', lineHeight: 1.5 }}>
+              Chưa có thư mục. Tạo thủ công hoặc để AI phân loại giúp bạn.
+            </div>
+          )}
+
+          {folders.map((f) => (
+            <div
+              key={f.id}
+              className="vf-row"
+              role="button"
+              style={{
+                ...exStyles.row,
+                ...(current === f.id ? exStyles.rowActive : {}),
+                ...(dropKey === f.id ? exStyles.rowDrop : {})
+              }}
+              onClick={() => setCurrent(f.id)}
+              {...dropProps(f.id, f.id)}
+            >
+              <Icon name="folder" size={16} />
+              {renaming?.id === f.id ? (
+                <input
+                  autoFocus
+                  style={exStyles.renameInput}
+                  value={renaming.name}
+                  maxLength={40}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setRenaming({ ...renaming, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') renameFolder()
+                    if (e.key === 'Escape') setRenaming(null)
+                  }}
+                  onBlur={renameFolder}
+                />
+              ) : (
+                <span style={exStyles.rowName}>{f.name}</span>
+              )}
+              <span style={exStyles.count}>{counts[f.id] || 0}</span>
+              <span className="vf-actions">
+                <button
+                  style={exStyles.iconBtn}
+                  title="Đổi tên"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setRenaming({ id: f.id, name: f.name })
+                  }}
+                >
+                  <Icon name="edit" size={13} />
+                </button>
+                <button
+                  style={exStyles.iconBtn}
+                  title="Xoá thư mục"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setConfirm({ kind: 'folder', id: f.id, name: f.name, count: counts[f.id] || 0 })
+                  }}
+                >
+                  <Icon name="trash" size={13} />
+                </button>
+              </span>
+            </div>
+          ))}
+
+          {creating && (
+            <div style={{ ...exStyles.row, cursor: 'default' }}>
+              <Icon name="folder" size={16} />
+              <input
+                autoFocus
+                style={exStyles.renameInput}
+                placeholder="Tên thư mục"
+                value={newName}
+                maxLength={40}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') createFolder()
+                  if (e.key === 'Escape') {
+                    setCreating(false)
+                    setNewName('')
+                  }
+                }}
+                onBlur={createFolder}
+              />
+            </div>
+          )}
+        </div>
+
+        <button className="qghost" style={{ ...quizStyles.ghost, justifyContent: 'flex-start' }} onClick={() => setCreating(true)}>
+          <Icon name="plus" size={16} /> Thư mục mới
+        </button>
+        <button
+          className="qprimary"
+          style={{ ...quizStyles.primary, justifyContent: 'center', ...(aiBusy ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
+          onClick={aiOrganize}
+          disabled={aiBusy}
+        >
+          <Icon name="sparkle" size={16} /> {aiBusy ? 'AI đang xếp...' : `AI phân loại (${unclassified})`}
+        </button>
+      </aside>
+
+      {/* ===== Khu vực giữa: các thẻ ===== */}
+      <main style={exStyles.main}>
+        <div style={exStyles.toolbar}>
+          <div style={{ flex: 1, minWidth: '140px' }}>
+            <div style={{ fontSize: fs(18), fontWeight: '700', color: 'var(--text-strong)' }}>{title}</div>
+            <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>
+              {visible.length} thẻ{q ? ' (đang lọc)' : ''}
+            </div>
+          </div>
+
+          <div style={exStyles.searchBox}>
+            <Icon name="search" size={14} />
+            <input style={exStyles.searchInput} placeholder="Tìm từ..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+
+          <button className="qghost" style={{ ...quizStyles.ghost, border: '1.5px solid var(--border)' }} onClick={() => setShowAdd((v) => !v)}>
+            <Icon name="plus" size={15} /> Thêm từ
+          </button>
+          <button
+            className="qprimary"
+            style={{ ...quizStyles.primary, padding: '8px 18px', fontSize: fs(14), ...(visible.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+            onClick={() => setMode('study')}
+            disabled={visible.length === 0}
+          >
+            <Icon name="cards" size={15} /> Học thẻ
+          </button>
+        </div>
+
+        {showAdd && (
+          <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-soft)', display: 'flex', justifyContent: 'center' }}>
+            <AddWordBox
+              profileId={profileId}
+              profile={profile}
+              cefrLevel={cefrLevel}
+              folderId={typeof current === 'number' ? current : null}
+              onAdded={reload}
+            />
+          </div>
+        )}
+
+        {selected.size > 0 && (
+          <div style={exStyles.selBar}>
+            <strong>Đã chọn {selected.size} thẻ</strong>
+            <div style={{ width: '210px' }}>
+              <Dropdown
+                value=""
+                options={folderOptions}
+                placeholder="Chuyển vào thư mục..."
+                onChange={(v) => moveWords([...selected], v === 'none' ? null : v)}
+              />
+            </div>
+            <button
+              className="qghost"
+              style={{ ...quizStyles.ghost, color: '#ef4444', padding: '8px 12px' }}
+              onClick={() => setConfirm({ kind: 'words', ids: [...selected] })}
+            >
+              <Icon name="trash" size={14} /> Xoá
+            </button>
+            <button className="qghost" style={{ ...quizStyles.ghost, padding: '8px 12px' }} onClick={() => setSelected(new Set())}>
+              Bỏ chọn
+            </button>
+          </div>
+        )}
+
+        <div style={exStyles.grid} onClick={() => setSelected(new Set())}>
+          {visible.length === 0 && (
+            <div style={exStyles.empty}>
+              {words.length === 0
+                ? 'Chưa có từ vựng nào. Trò chuyện với AI để tự ghi lại từ hay gặp, hoặc bấm "Thêm từ" ở trên.'
+                : q
+                  ? 'Không tìm thấy từ nào khớp.'
+                  : current === 'none'
+                    ? 'Mọi từ đã được phân loại.'
+                    : 'Thư mục trống. Kéo thẻ vào đây, hoặc chọn thẻ rồi dùng "Chuyển vào thư mục".'}
+            </div>
+          )}
+
+          {visible.map((w) => (
+            <div
+              key={w.id}
+              className="vf-card"
+              draggable
+              onDragStart={(e) => onDragStart(e, w)}
+              onDragEnd={() => {
+                dragIds.current = []
+                setDropKey(null)
+              }}
+              onClick={(e) => onCardClick(e, w)}
+              onDoubleClick={() => setDetail(w)}
+              title="Bấm đúp để xem chi tiết, kéo để chuyển thư mục"
+              style={{ ...exStyles.card, ...(selected.has(w.id) ? exStyles.cardSel : {}) }}
+            >
+              <div style={exStyles.cardWord}>{w.word}</div>
+              <div style={exStyles.cardMeaning}>{w.meaning}</div>
+              {current === 'all' && w.folder_id && folderName(w.folder_id) && <span style={exStyles.tag}>{folderName(w.folder_id)}</span>}
+            </div>
+          ))}
+        </div>
+
+        {toast && <div style={exStyles.toast}>{toast}</div>}
+      </main>
+
+      {/* ===== Chi tiết thẻ ===== */}
+      {detail && (
+        <div style={settingsStyles.overlay} onClick={() => setDetail(null)}>
+          <div style={{ ...settingsStyles.modal, width: '420px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+              <div style={{ fontSize: fs(24), fontWeight: '700', color: 'var(--text-strong)', flex: 1, wordBreak: 'break-word' }}>{detail.word}</div>
+              <button style={vocabStyles.cardSpeak} onClick={() => speakText(detail.word, speakLang)} title="Nghe phát âm">
+                <Icon name="speaker" size={16} />
+              </button>
+              <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setDetail(null)}>
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <div style={{ fontSize: fs(16), fontWeight: '600', marginBottom: '8px' }}>{detail.meaning}</div>
+            {detail.example_sentence && (
+              <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic', marginBottom: '16px', lineHeight: 1.5 }}>
+                "{detail.example_sentence}"
+              </div>
+            )}
+
+            <Field label="Thư mục">
+              <Dropdown
+                up
+                value={detail.folder_id ?? 'none'}
+                options={folderOptions}
+                onChange={async (v) => {
+                  const target = v === 'none' ? null : v
+                  await moveWords([detail.id], target)
+                  setDetail((d) => (d ? { ...d, folder_id: target } : d))
+                }}
+              />
+            </Field>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '18px' }}>
+              <button
+                className="qghost"
+                style={{ ...quizStyles.ghost, color: '#ef4444' }}
+                onClick={() => setConfirm({ kind: 'words', ids: [detail.id] })}
+              >
+                <Icon name="trash" size={15} /> Xoá thẻ
+              </button>
+              <button className="qprimary" style={quizStyles.primary} onClick={() => setDetail(null)}>Đóng</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Xác nhận xoá ===== */}
+      {confirm && (
+        <div style={{ ...settingsStyles.overlay, zIndex: 2100 }} onClick={() => setConfirm(null)}>
+          <div style={{ ...settingsStyles.modal, width: '380px' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 10px', fontSize: fs(18), fontWeight: '700' }}>
+              {confirm.kind === 'folder' ? `Xoá thư mục "${confirm.name}"?` : `Xoá ${confirm.ids.length} thẻ?`}
+            </h3>
+            <p style={{ margin: '0 0 20px', fontSize: fs(13), color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              {confirm.kind === 'folder'
+                ? `Chỉ xoá thư mục. ${confirm.count} thẻ bên trong không bị xoá mà quay về "Chưa phân loại".`
+                : 'Các thẻ bị xoá sẽ không khôi phục được.'}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button className="qghost" style={quizStyles.ghost} onClick={() => setConfirm(null)}>Huỷ</button>
+              <button style={styles.dangerButton} onClick={doDelete}>Xoá</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function AppContent({ settings }) {
   const [step, setStep] = useState(0)
