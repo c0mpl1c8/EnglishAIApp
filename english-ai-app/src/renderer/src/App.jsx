@@ -92,6 +92,7 @@ const iconPaths = {
   sparkle: ['M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z'],
   trend: ['m22 7-8.5 8.5-5-5L2 17', 'M16 7h6v6'],
   folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  clock: ['M12 6v6l4 2', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
   search: ['M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16z', 'm21 21-4.3-4.3'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
@@ -1483,7 +1484,9 @@ function QuestionBlock({ q, picked, answered, onChoose }) {
 
       {answered && (
         <div style={{ ...practiceStyles.feedback, ...(picked === q.answer ? practiceStyles.ok : practiceStyles.bad) }}>
-          <div style={{ fontWeight: '700' }}>{picked === q.answer ? 'Chính xác!' : `Đáp án đúng: ${q.options[q.answer]}`}</div>
+          <div style={{ fontWeight: '700' }}>
+            {picked === q.answer ? q.okText || 'Chính xác!' : q.badText || `Đáp án đúng: ${q.options[q.answer]}`}
+          </div>
           {q.explanation && <div style={{ marginTop: '6px', fontSize: fs(13) }}>{q.explanation}</div>}
         </div>
       )}
@@ -1953,10 +1956,638 @@ function QuizHistory({ profileId, onBack, onRetry }) {
   )
 }
 
+// ===== Trò chơi ôn tập: dùng dữ liệu có sẵn, không gọi AI =====
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+
+// --- Điền từ vào câu ---
+function buildCloze(words) {
+  const items = []
+  for (const w of words) {
+    const word = String(w.word || '').trim()
+    const sent = String(w.example_sentence || '').trim()
+    if (!word || !sent) continue
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${escapeRe(word)})(?![\\p{L}\\p{N}])`, 'iu')
+    const m = sent.match(re)
+    if (!m) continue
+    const start = m.index + m[1].length
+    items.push({
+      id: w.id,
+      word,
+      meaning: w.meaning,
+      full: sent,
+      sentence: sent.slice(0, start) + '_____' + sent.slice(start + m[2].length)
+    })
+  }
+  return items
+}
+
+function makeClozeQuestions(items, allWords, n) {
+  return shuffleArr(items)
+    .slice(0, n)
+    .map((it) => {
+      const sentLower = it.sentence.toLowerCase()
+      const seen = new Set([it.word.toLowerCase()])
+      const distractors = []
+      for (const o of shuffleArr(allWords)) {
+        const k = String(o.word || '').toLowerCase()
+        if (!k || seen.has(k) || sentLower.includes(k)) continue
+        seen.add(k)
+        distractors.push(o.word)
+        if (distractors.length === 3) break
+      }
+      if (distractors.length < 3) return null
+      const options = shuffleArr([it.word, ...distractors])
+      return { ...it, options, answer: options.indexOf(it.word) }
+    })
+    .filter(Boolean)
+}
+
+function ClozeGame({ profileId, onExit }) {
+  const [phase, setPhase] = useState('loading') // loading | empty | question | answered | done
+  const [qs, setQs] = useState([])
+  const [index, setIndex] = useState(0)
+  const [picked, setPicked] = useState(null)
+  const [score, setScore] = useState(0)
+  const [hint, setHint] = useState(false)
+  const [eligible, setEligible] = useState(0)
+  const wordsRef = useRef([])
+
+  const start = (words) => {
+    const items = buildCloze(words)
+    setEligible(items.length)
+    const list = makeClozeQuestions(items, words, 10)
+    if (list.length < 3) {
+      setPhase('empty')
+      return
+    }
+    setQs(list)
+    setIndex(0)
+    setPicked(null)
+    setScore(0)
+    setHint(false)
+    setPhase('question')
+  }
+
+  useEffect(() => {
+    window.api.getVocabulary({ profileId }).then((res) => {
+      wordsRef.current = res.vocabulary || []
+      start(wordsRef.current)
+    })
+  }, [])
+
+  const choose = (i) => {
+    if (phase !== 'question') return
+    const ok = i === qs[index].answer
+    window.api.recordSkillEvent({ profileId, skill: 'vocabulary', correct: ok, source: 'cloze' })
+    setPicked(i)
+    if (ok) setScore((s) => s + 1)
+    setPhase('answered')
+  }
+
+  const next = () => {
+    if (index + 1 >= qs.length) {
+      setPhase('done')
+      return
+    }
+    setIndex(index + 1)
+    setPicked(null)
+    setHint(false)
+    setPhase('question')
+  }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Enter' && phase === 'answered') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loading') return wrap(<p>Đang chuẩn bị câu hỏi...</p>)
+
+  if (phase === 'empty') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa đủ dữ liệu để chơi</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
+          Trò này cần ít nhất 3 từ có câu ví dụ chứa đúng từ đó, và tổng cộng từ 4 từ trở lên (hiện có {eligible} từ dùng được).
+          Hãy thêm từ trong mục Từ vựng, AI sẽ viết câu ví dụ cho bạn.
+        </p>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Kết quả</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{qs.length}</div>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+          {score / qs.length >= 0.8 ? 'Rất tốt!' : score / qs.length >= 0.5 ? 'Khá ổn, thử thêm một lượt nhé.' : 'Hãy ôn lại các từ này trong mục Từ vựng.'}
+        </p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={() => start(wordsRef.current)}>Chơi lại</button>
+        </div>
+      </>
+    )
+  }
+
+  const cur = qs[index]
+  const answered = phase === 'answered'
+  const q = {
+    question: cur.sentence,
+    options: cur.options,
+    answer: cur.answer,
+    explanation: `Câu đầy đủ: "${cur.full}" · ${cur.word}: ${cur.meaning}`
+  }
+
+  return wrap(
+    <>
+      <ProgressDots current={index + 1} total={qs.length} />
+      <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
+        Điền từ vào câu · Câu {index + 1}/{qs.length}
+      </p>
+
+      {!answered && (
+        <div style={{ minHeight: '22px' }}>
+          {hint ? (
+            <span style={{ fontSize: fs(13), color: 'var(--text-soft)' }}>Gợi ý nghĩa: {cur.meaning}</span>
+          ) : (
+            <button className="qghost" style={{ ...quizStyles.ghost, padding: '4px 10px', fontSize: fs(13) }} onClick={() => setHint(true)}>
+              <Icon name="sparkle" size={13} /> Xem gợi ý nghĩa
+            </button>
+          )}
+        </div>
+      )}
+
+      <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
+
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+        {answered && (
+          <button className="qprimary" style={quizStyles.primary} onClick={next}>
+            {index + 1 >= qs.length ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+// --- Tìm câu sai ---
+function buildSpotRounds(mistakes, vocab, n) {
+  const seen = new Set()
+  const base = []
+  for (const m of mistakes) {
+    const o = String(m.original_text || '').trim()
+    const c = String(m.corrected_text || '').trim()
+    if (!o || !c || normText(o) === normText(c) || seen.has(normText(o))) continue
+    seen.add(normText(o))
+    base.push(m)
+  }
+  const correctPool = [
+    ...base.map((m) => String(m.corrected_text).trim()),
+    ...vocab.map((v) => String(v.example_sentence || '').trim()).filter(Boolean)
+  ]
+  const rounds = []
+  for (const m of shuffleArr(base).slice(0, n)) {
+    const o = String(m.original_text).trim()
+    const c = String(m.corrected_text).trim()
+    const third = shuffleArr(correctPool.filter((s) => normText(s) !== normText(c) && normText(s) !== normText(o)))[0]
+    if (!third) continue
+    const options = shuffleArr([o, c, third])
+    rounds.push({
+      skill: m.skill || 'other',
+      explanation: m.explanation || '',
+      wrong: o,
+      correct: c,
+      options,
+      answer: options.indexOf(o)
+    })
+  }
+  return rounds
+}
+
+function SpotGame({ profileId, onExit }) {
+  const [phase, setPhase] = useState('loading') // loading | empty | question | answered | done
+  const [rounds, setRounds] = useState([])
+  const [index, setIndex] = useState(0)
+  const [picked, setPicked] = useState(null)
+  const [score, setScore] = useState(0)
+  const dataRef = useRef({ mistakes: [], vocab: [] })
+
+  const start = () => {
+    const list = buildSpotRounds(dataRef.current.mistakes, dataRef.current.vocab, 10)
+    if (list.length === 0) {
+      setPhase('empty')
+      return
+    }
+    setRounds(list)
+    setIndex(0)
+    setPicked(null)
+    setScore(0)
+    setPhase('question')
+  }
+
+  useEffect(() => {
+    Promise.all([window.api.getMistakes({ profileId }), window.api.getVocabulary({ profileId })]).then(([m, v]) => {
+      dataRef.current = { mistakes: m.mistakes || [], vocab: v.vocabulary || [] }
+      start()
+    })
+  }, [])
+
+  const choose = (i) => {
+    if (phase !== 'question') return
+    const r = rounds[index]
+    const ok = i === r.answer
+    window.api.recordSkillEvent({ profileId, skill: r.skill, correct: ok, source: 'spot' })
+    setPicked(i)
+    if (ok) setScore((s) => s + 1)
+    setPhase('answered')
+  }
+
+  const next = () => {
+    if (index + 1 >= rounds.length) {
+      setPhase('done')
+      return
+    }
+    setIndex(index + 1)
+    setPicked(null)
+    setPhase('question')
+  }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Enter' && phase === 'answered') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loading') return wrap(<p>Đang chuẩn bị câu hỏi...</p>)
+
+  if (phase === 'empty') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa đủ dữ liệu để chơi</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
+          Trò này dùng các lỗi bạn từng mắc trong lúc trò chuyện. Hãy chat thêm để AI ghi nhận lỗi (cần ít nhất 2 lỗi khác nhau, hoặc 1 lỗi và 1 từ có câu ví dụ).
+        </p>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Kết quả</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{rounds.length}</div>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+          {score / rounds.length >= 0.8 ? 'Mắt bạn tinh đấy!' : 'Những lỗi này vẫn nằm trong lịch ôn của bạn, hãy thử lại sau.'}
+        </p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={start}>Chơi lại</button>
+        </div>
+      </>
+    )
+  }
+
+  const r = rounds[index]
+  const answered = phase === 'answered'
+  const q = {
+    question: 'Câu nào dưới đây có lỗi?',
+    options: r.options,
+    answer: r.answer,
+    okText: 'Chính xác! Đó là câu có lỗi.',
+    badText: `Câu có lỗi là: "${r.wrong}"`,
+    explanation: `Câu đúng: "${r.correct}"${r.explanation ? `. ${r.explanation}` : ''}`
+  }
+
+  return wrap(
+    <>
+      <ProgressDots current={index + 1} total={rounds.length} />
+      <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
+        Tìm câu sai · Câu {index + 1}/{rounds.length}
+      </p>
+      <p style={{ margin: 0, fontSize: fs(12), color: 'var(--text-muted)', maxWidth: '420px' }}>
+        Một trong ba câu là câu bạn từng viết sai. Hãy tìm ra nó.
+      </p>
+
+      <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
+
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+        {answered && (
+          <button className="qprimary" style={quizStyles.primary} onClick={next}>
+            {index + 1 >= rounds.length ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
+          </button>
+        )}
+      </div>
+    </>
+  )
+}
+
+// --- Ghép từ với nghĩa trong 60 giây ---
+const MATCH_ROUND = 6
+const MATCH_SECONDS = 60
+
+function MatchGame({ profileId, onExit }) {
+  const [phase, setPhase] = useState('loading') // loading | empty | ready | playing | done
+  const [pairs, setPairs] = useState([])
+  const [meanings, setMeanings] = useState([])
+  const [matched, setMatched] = useState(new Set())
+  const [selW, setSelW] = useState(null)
+  const [selM, setSelM] = useState(null)
+  const [flash, setFlash] = useState(null)
+  const [score, setScore] = useState(0)
+  const [combo, setCombo] = useState(0)
+  const [bestCombo, setBestCombo] = useState(0)
+  const [right, setRight] = useState(0)
+  const [wrong, setWrong] = useState(0)
+  const [timeLeft, setTimeLeft] = useState(MATCH_SECONDS)
+  const [best, setBest] = useState(0)
+  const [newBest, setNewBest] = useState(false)
+  const cardsRef = useRef([])
+  const deckRef = useRef([])
+  const posRef = useRef(0)
+  const bestKey = `matchBest_${profileId}`
+
+  useEffect(() => {
+    window.api.getVocabulary({ profileId }).then((res) => {
+      const seen = new Set()
+      const cards = (res.vocabulary || []).filter((w) => {
+        const k = normText(w.meaning)
+        if (!String(w.word || '').trim() || !k || seen.has(k)) return false
+        seen.add(k)
+        return true
+      })
+      cardsRef.current = cards
+      try {
+        setBest(Number(localStorage.getItem(bestKey) || 0))
+      } catch {
+        setBest(0)
+      }
+      setPhase(cards.length < MATCH_ROUND ? 'empty' : 'ready')
+    })
+  }, [])
+
+  const deal = () => {
+    if (posRef.current + MATCH_ROUND > deckRef.current.length) {
+      deckRef.current = shuffleArr(cardsRef.current)
+      posRef.current = 0
+    }
+    const slice = deckRef.current.slice(posRef.current, posRef.current + MATCH_ROUND)
+    posRef.current += MATCH_ROUND
+    setPairs(slice)
+    setMeanings(shuffleArr(slice))
+    setMatched(new Set())
+    setSelW(null)
+    setSelM(null)
+  }
+
+  const startGame = () => {
+    deckRef.current = shuffleArr(cardsRef.current)
+    posRef.current = 0
+    setScore(0)
+    setCombo(0)
+    setBestCombo(0)
+    setRight(0)
+    setWrong(0)
+    setNewBest(false)
+    setFlash(null)
+    setTimeLeft(MATCH_SECONDS)
+    deal()
+    setPhase('playing')
+  }
+
+  useEffect(() => {
+    if (phase !== 'playing') return
+    const t = setInterval(() => setTimeLeft((s) => s - 1), 1000)
+    return () => clearInterval(t)
+  }, [phase])
+
+  useEffect(() => {
+    if (phase === 'playing' && timeLeft <= 0) {
+      try {
+        const prev = Number(localStorage.getItem(bestKey) || 0)
+        if (score > prev) {
+          localStorage.setItem(bestKey, String(score))
+          setBest(score)
+          setNewBest(true)
+        }
+      } catch {
+        // bỏ qua nếu không lưu được
+      }
+      setPhase('done')
+    }
+  }, [timeLeft, phase])
+
+  const pick = (side, id) => {
+    if (phase !== 'playing' || flash || matched.has(id)) return
+    const w = side === 'w' ? id : selW
+    const m = side === 'm' ? id : selM
+    if (side === 'w') setSelW(id)
+    else setSelM(id)
+    if (w == null || m == null) return
+
+    if (w === m) {
+      const done = new Set(matched).add(w)
+      setMatched(done)
+      setScore((s) => s + 10 + Math.min(combo, 5) * 2)
+      setCombo(combo + 1)
+      setBestCombo((b) => Math.max(b, combo + 1))
+      setRight((r) => r + 1)
+      setSelW(null)
+      setSelM(null)
+      if (done.size === pairs.length) setTimeout(deal, 450)
+    } else {
+      setCombo(0)
+      setWrong((x) => x + 1)
+      setTimeLeft((t) => Math.max(0, t - 2))
+      setFlash({ w, m })
+      setTimeout(() => {
+        setFlash(null)
+        setSelW(null)
+        setSelM(null)
+      }, 350)
+    }
+  }
+
+  const tile = (id, side) => {
+    const isMatched = matched.has(id)
+    const isSel = side === 'w' ? selW === id : selM === id
+    const isWrong = flash && (side === 'w' ? flash.w === id : flash.m === id)
+    return {
+      ...quizStyles.option,
+      alignItems: 'center',
+      minHeight: '48px',
+      fontSize: side === 'w' ? fs(15) : fs(13),
+      fontWeight: side === 'w' ? '600' : '400',
+      ...(isMatched
+        ? { ...quizStyles.correct, opacity: 0.5, cursor: 'default' }
+        : isWrong
+          ? quizStyles.wrong
+          : isSel
+            ? { border: '1.5px solid var(--accent)', background: 'var(--accent-soft)' }
+            : {})
+    }
+  }
+
+  const wrap = (children) => (
+    <div style={styles.container} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      {children}
+    </div>
+  )
+
+  if (phase === 'loading') return wrap(<p>Đang chuẩn bị...</p>)
+
+  if (phase === 'empty') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa đủ từ để chơi</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
+          Trò này cần ít nhất {MATCH_ROUND} từ có nghĩa khác nhau. Hãy trò chuyện thêm hoặc thêm từ trong mục Từ vựng.
+        </p>
+        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+      </>
+    )
+  }
+
+  if (phase === 'ready') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Ghép từ 60 giây</h2>
+        <div style={{ ...practiceStyles.card, maxWidth: '420px', fontSize: fs(14), lineHeight: 1.7 }}>
+          <div>Ghép mỗi từ ở cột trái với nghĩa đúng ở cột phải.</div>
+          <div>Ghép đúng liên tiếp để nhận thêm điểm combo.</div>
+          <div>Ghép sai sẽ mất 2 giây và reset combo.</div>
+          <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: fs(12) }}>Điểm cao nhất của bạn: {best}</div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={startGame}>
+            Bắt đầu <Icon name="next" size={16} />
+          </button>
+        </div>
+      </>
+    )
+  }
+
+  if (phase === 'done') {
+    const total = right + wrong
+    return wrap(
+      <>
+        <h2 style={styles.question}>Hết giờ!</h2>
+        <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score} điểm</div>
+        {newBest && <p style={{ color: '#27ae60', margin: 0, fontWeight: '700' }}>Kỷ lục mới!</p>}
+        <div style={{ ...practiceStyles.card, maxWidth: '360px', fontSize: fs(14), lineHeight: 1.8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Cặp ghép đúng</span><strong>{right}</strong></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Lần ghép sai</span><strong>{wrong}</strong></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Combo dài nhất</span><strong>{bestCombo}</strong></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Độ chính xác</span><strong>{total ? Math.round((right / total) * 100) : 0}%</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Điểm cao nhất</span><strong>{best}</strong></div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={startGame}>Chơi lại</button>
+        </div>
+      </>
+    )
+  }
+
+  return wrap(
+    <>
+      <div style={{ width: '100%', maxWidth: '560px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: fs(14), marginBottom: '6px' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: '700', color: timeLeft <= 10 ? '#c0392b' : 'var(--text)' }}>
+            <Icon name="clock" size={16} /> {timeLeft}s
+          </span>
+          <span style={{ fontWeight: '700' }}>Điểm: {score}</span>
+          <span style={{ color: combo >= 3 ? 'var(--accent-text)' : 'var(--text-muted)', fontWeight: '700' }}>Combo x{combo}</span>
+        </div>
+        <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
+          <div
+            style={{
+              width: `${(timeLeft / MATCH_SECONDS) * 100}%`,
+              height: '100%',
+              background: timeLeft <= 10 ? '#c0392b' : 'var(--accent)',
+              transition: 'width 1s linear'
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={{ width: '100%', maxWidth: '560px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {pairs.map((p) => (
+            <button key={p.id} className="quiz-opt" style={tile(p.id, 'w')} onClick={() => pick('w', p.id)}>
+              {p.word}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {meanings.map((p) => (
+            <button key={p.id} className="quiz-opt" style={tile(p.id, 'm')} onClick={() => pick('m', p.id)}>
+              {p.meaning}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+        <Icon name="back" size={16} /> Thoát
+      </button>
+    </>
+  )
+}
+
+function HubRow({ icon, title, desc, badge, onClick }) {
+  return (
+    <button className="qrow" style={quizStyles.modeRow} onClick={onClick}>
+      <span style={quizStyles.modeIcon}><Icon name={icon} size={16} /></span>
+      <span style={hubStyles.text}>
+        <span style={{ ...hubStyles.title, fontSize: fs(14) }}>{title}</span>
+        <span style={hubStyles.desc}>{desc}</span>
+      </span>
+      {badge > 0 && <span style={styles.dueBadge}>{badge > 99 ? '99+' : badge}</span>}
+    </button>
+  )
+}
+
 function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRefresh, onExit }) {
-  const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz | history | retry
+  const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz | history | retry | cloze | spot | match
   const [quiz, setQuiz] = useState(null)
   const [retryQs, setRetryQs] = useState([])
+  const back = () => setMode('hub')
 
   if (mode === 'mistakes') {
     return (
@@ -1977,7 +2608,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
       <QuizSetup
         profile={profile}
         mistakeCount={mistakeCount}
-        onBack={() => setMode('hub')}
+        onBack={back}
         onStart={(cfg) => {
           setQuiz(cfg)
           setMode('quiz')
@@ -2015,7 +2646,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
     return (
       <QuizHistory
         profileId={profileId}
-        onBack={() => setMode('hub')}
+        onBack={back}
         onRetry={(qs) => {
           setRetryQs(qs)
           setMode('retry')
@@ -2039,34 +2670,47 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
     )
   }
 
+  if (mode === 'cloze') return <ClozeGame profileId={profileId} onExit={back} />
+  if (mode === 'spot') return <SpotGame profileId={profileId} onExit={back} />
+  if (mode === 'match') return <MatchGame profileId={profileId} onExit={back} />
+
   return (
     <StepCard title="Ôn tập" subtitle="Chọn cách bạn muốn luyện hôm nay.">
-      <style>{dropdownCss}</style>
+      <style>{quizCss}</style>
 
-      <button className="level-card" style={hubStyles.card} onClick={() => setMode('mistakes')}>
-        <span style={hubStyles.icon}><Icon name="repeat" size={20} /></span>
-        <span style={hubStyles.text}>
-          <span style={hubStyles.title}>Ôn lỗi cũ</span>
-          <span style={hubStyles.desc}>AI đưa lại những lỗi bạn từng mắc theo lịch giãn cách</span>
-        </span>
-        {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
-      </button>
+      <div>
+        <div style={onboardStyles.fieldLabel}>Ôn tập</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <HubRow
+            icon="repeat"
+            title="Ôn lỗi cũ"
+            desc="AI đưa lại lỗi bạn từng mắc theo lịch giãn cách"
+            badge={dueCount}
+            onClick={() => setMode('mistakes')}
+          />
+          <HubRow
+            icon="check"
+            title="Bài tập trắc nghiệm"
+            desc="AI tạo câu hỏi theo chủ đề, hoặc luyện điểm yếu của bạn"
+            onClick={() => setMode('setup')}
+          />
+          <HubRow
+            icon="book"
+            title="Xem lại bài đã làm"
+            desc="Xem từng câu, đáp án và giải thích của các bài trước"
+            onClick={() => setMode('history')}
+          />
+        </div>
+      </div>
 
-      <button className="level-card" style={hubStyles.card} onClick={() => setMode('setup')}>
-        <span style={hubStyles.icon}><Icon name="check" size={20} /></span>
-        <span style={hubStyles.text}>
-          <span style={hubStyles.title}>Bài tập trắc nghiệm</span>
-          <span style={hubStyles.desc}>AI tạo câu hỏi theo chủ đề bạn chọn, hoặc luyện điểm yếu của bạn</span>
-        </span>
-      </button>
-
-      <button className="level-card" style={hubStyles.card} onClick={() => setMode('history')}>
-        <span style={hubStyles.icon}><Icon name="book" size={20} /></span>
-        <span style={hubStyles.text}>
-          <span style={hubStyles.title}>Xem lại bài đã làm</span>
-          <span style={hubStyles.desc}>Xem từng câu, đáp án và giải thích của các bài trắc nghiệm trước</span>
-        </span>
-      </button>
+      <div>
+        <div style={onboardStyles.fieldLabel}>Trò chơi</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <HubRow icon="edit" title="Điền từ vào câu" desc="Chọn từ đúng cho chỗ trống trong câu ví dụ của bạn" onClick={() => setMode('cloze')} />
+          <HubRow icon="warning" title="Tìm câu sai" desc="Tìm câu bạn từng viết sai trong 3 câu" onClick={() => setMode('spot')} />
+          <HubRow icon="clock" title="Ghép từ 60 giây" desc="Ghép từ với nghĩa nhanh nhất, càng liên tiếp càng nhiều điểm" onClick={() => setMode('match')} />
+        </div>
+      </div>
 
       <div style={onboardStyles.actions}>
         <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={onExit}>
