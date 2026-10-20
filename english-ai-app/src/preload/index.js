@@ -36,6 +36,10 @@ const api = {
   moveVocabWords: (data) => ipcRenderer.invoke('move-vocab-words', data),
   deleteVocabWords: (data) => ipcRenderer.invoke('delete-vocab-words', data),
   aiOrganizeVocabulary: (data) => ipcRenderer.invoke('ai-organize-vocabulary', data),
+  saveQuizAttempt: (data) => ipcRenderer.invoke('save-quiz-attempt', data),
+  getQuizAttempts: (data) => ipcRenderer.invoke('get-quiz-attempts', data),
+  getQuizAttempt: (data) => ipcRenderer.invoke('get-quiz-attempt', data),
+  deleteQuizAttempt: (data) => ipcRenderer.invoke('delete-quiz-attempt', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

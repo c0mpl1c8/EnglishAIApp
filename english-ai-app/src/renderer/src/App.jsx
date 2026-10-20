@@ -1,4 +1,4 @@
-import { useState ,useEffect,useLayoutEffect,useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 
 const fs = (px) => `calc(${px}px * var(--fs))`
 
@@ -1248,7 +1248,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   )
 }
 
-function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit }) {
+function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, onExit }) {
   // loading | question | answered | done | error
   const [phase, setPhase] = useState('loading')
   const [questions, setQuestions] = useState([])
@@ -1256,10 +1256,22 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
   const [picked, setPicked] = useState(null)
   const [score, setScore] = useState(0)
   const [errMsg, setErrMsg] = useState('')
+  const [log, setLog] = useState([])
+  const savedRef = useRef(false)
 
   const load = async () => {
     setPhase('loading')
     setErrMsg('')
+    setLog([])
+    savedRef.current = false
+    if (preset) {
+      setQuestions(shuffleArr(preset).map(reshuffleQuestion))
+      setIndex(0)
+      setPicked(null)
+      setScore(0)
+      setPhase('question')
+      return
+    }
     const res = await window.api.generateQuiz({
       profileId,
       targetLanguage: profile.targetLanguage,
@@ -1288,21 +1300,47 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
     if (phase !== 'question') return
     const q = questions[index]
     const ok = i === q.answer
-    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'quiz', question: q.question })
+    window.api.recordSkillEvent({
+      profileId,
+      skill: q.skill,
+      correct: ok,
+      source: preset ? 'retry' : 'quiz',
+      question: preset ? undefined : q.question
+    })
+    setLog((l) => [
+      ...l,
+      { question: q.question, options: q.options, answer: q.answer, picked: i, explanation: q.explanation, skill: q.skill }
+    ])
     setPicked(i)
     if (ok) setScore((s) => s + 1)
     setPhase('answered')
   }
 
+  const finish = () => {
+    if (!preset && !savedRef.current && log.length > 0) {
+      savedRef.current = true
+      window.api.saveQuizAttempt({ profileId, mode: 'quiz', label, details: log })
+    }
+    setPhase('done')
+  }
+
   const next = () => {
     if (index + 1 >= questions.length) {
-      setPhase('done')
+      finish()
       return
     }
     setIndex(index + 1)
     setPicked(null)
     setPhase('question')
   }
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Enter' && phase === 'answered') next()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   const wrap = (children) => (
     <div style={styles.container} className="fade-in">
@@ -1336,16 +1374,22 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
 
   if (phase === 'done') {
     const pct = Math.round((score / questions.length) * 100)
-    const msg = pct >= 80 ? 'Rất tốt!' : pct >= 50 ? 'Khá ổn, luyện thêm một chút nhé.' : 'Chưa vững, hãy xem lại phần giải thích và thử bộ mới.'
+    const msg = pct >= 80 ? 'Rất tốt!' : pct >= 50 ? 'Khá ổn, luyện thêm một chút nhé.' : 'Chưa vững, hãy xem lại phần giải thích và thử lại.'
     return wrap(
       <>
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>{msg}</p>
+        {!preset && (
+          <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: fs(12) }}>
+            Bài này đã được lưu, xem lại ở mục "Xem lại bài đã làm" trong Ôn tập.
+          </p>
+        )}
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
-          <button className="qprimary" style={quizStyles.primary} onClick={load}>Bộ câu hỏi mới</button>
-          
+          <button className="qprimary" style={quizStyles.primary} onClick={load}>
+            {preset ? 'Làm lại' : 'Bộ câu hỏi mới'}
+          </button>
         </div>
       </>
     )
@@ -1353,7 +1397,6 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
 
   const q = questions[index]
   const answered = phase === 'answered'
-  const letters = ['A', 'B', 'C', 'D', 'E']
 
   return wrap(
     <>
@@ -1362,40 +1405,9 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
         Câu {index + 1}/{questions.length} · {label}
       </p>
 
-      <div style={practiceStyles.card}>
-        <div style={practiceStyles.sentence}>{q.question}</div>
-      </div>
+      <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
 
-      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {q.options.map((o, i) => {
-          const isCorrect = i === q.answer
-          const isPicked = i === picked
-          const extra = !answered ? {} : isCorrect ? quizStyles.correct : isPicked ? quizStyles.wrong : quizStyles.dim
-          return (
-            <button
-              key={i}
-              className="quiz-opt"
-              style={{ ...quizStyles.option, ...extra, ...(answered ? { cursor: 'default' } : {}) }}
-              onClick={() => choose(i)}
-              disabled={answered}
-            >
-              <span style={quizStyles.letter}>{letters[i]}</span>
-              <span style={{ flex: 1 }}>{o}</span>
-              {answered && isCorrect && <Icon name="check" size={16} />}
-              {answered && isPicked && !isCorrect && <Icon name="close" size={16} />}
-            </button>
-          )
-        })}
-      </div>
-
-      {answered && (
-        <div style={{ ...practiceStyles.feedback, ...(picked === q.answer ? practiceStyles.ok : practiceStyles.bad) }}>
-          <div style={{ fontWeight: '700' }}>{picked === q.answer ? 'Chính xác!' : `Đáp án đúng: ${q.options[q.answer]}`}</div>
-          {q.explanation && <div style={{ marginTop: '6px', fontSize: fs(13) }}>{q.explanation}</div>}
-        </div>
-      )}
-
-         <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
           <Icon name="back" size={16} /> Thoát
         </button>
@@ -1410,6 +1422,19 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, onExit
 }
 
 const DIFF_ORDER = ['easy', 'medium', 'hard']
+
+// Xáo lại thứ tự đáp án để người học không nhớ vị trí khi làm lại
+function reshuffleQuestion(q) {
+  const order = shuffleArr(q.options.map((_, i) => i))
+  return { ...q, options: order.map((i) => q.options[i]), answer: order.indexOf(q.answer) }
+}
+
+const fmtAt = (at) => (at ? `${at.slice(8, 10)}/${at.slice(5, 7)} ${at.slice(11, 16)}` : '')
+const scoreColor = (c, t) => {
+  const p = t ? c / t : 0
+  return p >= 0.8 ? '#27ae60' : p >= 0.5 ? '#e0a100' : '#c0392b'
+}
+
 const DIFF_LABEL = { easy: 'Dễ', medium: 'Vừa', hard: 'Khó' }
 
 // Chọn câu kế tiếp: gần độ khó mục tiêu nhất, rồi ưu tiên kỹ năng đã hỏi ít, tránh lặp kỹ năng vừa hỏi
@@ -1479,10 +1504,30 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
   const [note, setNote] = useState('')
   const [total, setTotal] = useState(count)
   const [errMsg, setErrMsg] = useState('')
+  const savedRef = useRef(false)
 
+  const saveAttempt = (list) => {
+    if (savedRef.current || list.length === 0) return
+    savedRef.current = true
+    window.api.saveQuizAttempt({
+      profileId,
+      mode: 'adaptive',
+      label: 'Luyện điểm yếu',
+      details: list.map((a) => ({
+        question: a.question,
+        options: a.options,
+        answer: a.answer,
+        picked: a.picked,
+        explanation: a.explanation,
+        skill: a.skill,
+        difficulty: a.difficulty
+      }))
+    })
+  }
   const load = async () => {
     setPhase('loading')
     setErrMsg('')
+    savedRef.current = false
     const res = await window.api.generateAdaptiveQuiz({
       profileId,
       targetLanguage: profile.targetLanguage,
@@ -1533,7 +1578,20 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
     const q = current.q
     const ok = i === q.answer
      window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'adaptive', question: q.question })
-    setAsked((a) => [...a, { skill: q.skill, skillLabel: q.skillLabel, difficulty: q.difficulty, correct: ok }])
+    setAsked((a) => [
+      ...a,
+      {
+        skill: q.skill,
+        skillLabel: q.skillLabel,
+        difficulty: q.difficulty,
+        correct: ok,
+        question: q.question,
+        options: q.options,
+        answer: q.answer,
+        picked: i,
+        explanation: q.explanation
+      }
+    ])
     setNote(
       ok
         ? target < 2
@@ -1550,11 +1608,13 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
 
   const next = () => {
     if (asked.length >= total) {
+      saveAttempt(asked)
       setPhase('done')
       return
     }
     const nx = pickNextQuestion(pool, used, target, askedBySkill(), current?.q.skill)
     if (!nx) {
+      saveAttempt(asked)
       setPhase('done')
       return
     }
@@ -1699,9 +1759,204 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
   )
 }
 
+function ReviewCard({ d, n }) {
+  const letters = ['A', 'B', 'C', 'D', 'E']
+  const ok = d.picked === d.answer
+  return (
+    <div style={{ ...practiceStyles.card, maxWidth: '640px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <span style={quizStyles.tag}>Câu {n}</span>
+          {d.difficulty && (
+            <span style={{ ...quizStyles.tag, background: 'var(--surface-soft)', color: 'var(--text-soft)' }}>
+              {DIFF_LABEL[d.difficulty]}
+            </span>
+          )}
+        </span>
+        <strong style={{ fontSize: fs(12), color: ok ? '#27ae60' : '#c0392b' }}>
+          {ok ? 'Đúng' : d.picked == null ? 'Chưa trả lời' : 'Sai'}
+        </strong>
+      </div>
+      <div style={{ ...practiceStyles.sentence, fontSize: fs(17), marginBottom: '10px' }}>{d.question}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {d.options.map((o, i) => {
+          const isCorrect = i === d.answer
+          const isPicked = i === d.picked
+          const extra = isCorrect ? quizStyles.correct : isPicked ? quizStyles.wrong : quizStyles.dim
+          return (
+            <div key={i} style={{ ...quizStyles.option, ...extra, cursor: 'default', padding: '9px 12px', fontSize: fs(14) }}>
+              <span style={quizStyles.letter}>{letters[i]}</span>
+              <span style={{ flex: 1 }}>{o}</span>
+              {isCorrect && <Icon name="check" size={15} />}
+              {isPicked && !isCorrect && <Icon name="close" size={15} />}
+            </div>
+          )
+        })}
+      </div>
+      {d.explanation && (
+        <div style={{ marginTop: '10px', fontSize: fs(13), color: 'var(--text-soft)', lineHeight: 1.5 }}>{d.explanation}</div>
+      )}
+    </div>
+  )
+}
+
+function QuizHistory({ profileId, onBack, onRetry }) {
+  const [list, setList] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [detail, setDetail] = useState(null)
+  const [onlyWrong, setOnlyWrong] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  const loadList = async () => {
+    const res = await window.api.getQuizAttempts({ profileId })
+    setList(res.attempts || [])
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    loadList()
+  }, [])
+
+  const open = async (id) => {
+    const res = await window.api.getQuizAttempt({ profileId, id })
+    if (res.success) {
+      setDetail(res.attempt)
+      setOnlyWrong(false)
+    }
+  }
+
+  const remove = async () => {
+    await window.api.deleteQuizAttempt({ profileId, id: detail.id })
+    setConfirmDel(false)
+    setDetail(null)
+    loadList()
+  }
+
+  const wrap = (children) => (
+    <div style={{ ...styles.container, justifyContent: 'flex-start', overflowY: 'auto', paddingTop: '32px' }} className="fade-in">
+      <style>{fadeStyle}</style>
+      <style>{quizCss}</style>
+      <style>{dropdownCss}</style>
+      {children}
+    </div>
+  )
+
+  if (loading) return wrap(<p>Đang tải...</p>)
+
+  if (detail) {
+    const items = detail.details || []
+    const wrongItems = items.filter((d) => d.picked !== d.answer)
+    const shown = onlyWrong ? wrongItems : items
+    return wrap(
+      <>
+        <div>
+          <h2 style={styles.question}>{detail.label || 'Bài trắc nghiệm'}</h2>
+          <p style={{ margin: '6px 0 0', fontSize: fs(13), color: 'var(--text-muted)' }}>
+            {fmtAt(detail.at)} ·{' '}
+            <strong style={{ color: scoreColor(detail.correct, detail.total) }}>{detail.correct}/{detail.total} đúng</strong>
+          </p>
+        </div>
+
+        <SegmentedControl
+          value={onlyWrong ? 'wrong' : 'all'}
+          onChange={(v) => setOnlyWrong(v === 'wrong')}
+          options={[
+            { value: 'all', label: `Tất cả (${items.length})` },
+            { value: 'wrong', label: `Câu sai (${wrongItems.length})` }
+          ]}
+        />
+
+        {shown.length === 0 && <p style={{ color: 'var(--text-muted)', margin: 0 }}>Không có câu sai nào, làm tốt lắm!</p>}
+        {shown.map((d) => {
+          const n = items.indexOf(d) + 1
+          return <ReviewCard key={n} d={d} n={n} />
+        })}
+
+        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={() => setDetail(null)}>
+            <Icon name="back" size={16} /> Danh sách
+          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button className="qghost" style={{ ...quizStyles.ghost, color: '#ef4444' }} onClick={() => setConfirmDel(true)}>
+              <Icon name="trash" size={14} /> Xoá bài
+            </button>
+            <button
+              className="qprimary"
+              style={{ ...quizStyles.primary, ...(wrongItems.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+              disabled={wrongItems.length === 0}
+              onClick={() =>
+                onRetry(
+                  wrongItems.map((d) => ({
+                    question: d.question,
+                    options: d.options,
+                    answer: d.answer,
+                    explanation: d.explanation,
+                    skill: d.skill
+                  }))
+                )
+              }
+            >
+              <Icon name="repeat" size={15} /> Làm lại câu sai
+            </button>
+          </div>
+        </div>
+
+        {confirmDel && (
+          <div style={settingsStyles.overlay} onClick={() => setConfirmDel(false)}>
+            <div style={{ ...settingsStyles.modal, width: '360px' }} onClick={(e) => e.stopPropagation()}>
+              <h3 style={{ margin: '0 0 10px', fontSize: fs(18), fontWeight: '700' }}>Xoá bài này?</h3>
+              <p style={{ margin: '0 0 20px', fontSize: fs(13), color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                Bài sẽ biến mất khỏi danh sách. Điểm kỹ năng đã tính từ bài này vẫn được giữ.
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button className="qghost" style={quizStyles.ghost} onClick={() => setConfirmDel(false)}>Huỷ</button>
+                <button style={styles.dangerButton} onClick={remove}>Xoá</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+
+  return wrap(
+    <>
+      <div>
+        <h2 style={styles.question}>Bài đã làm</h2>
+        <p style={{ margin: '6px 0 0', fontSize: fs(13), color: 'var(--text-muted)' }}>50 bài gần nhất</p>
+      </div>
+
+      {list.length === 0 ? (
+        <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>
+          Chưa có bài nào. Làm một bài trắc nghiệm, bài sẽ được lưu ở đây để bạn xem lại.
+        </p>
+      ) : (
+        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {list.map((a) => (
+            <button key={a.id} className="level-card" style={hubStyles.card} onClick={() => open(a.id)}>
+              <span style={hubStyles.text}>
+                <span style={hubStyles.title}>{a.label || 'Bài trắc nghiệm'}</span>
+                <span style={hubStyles.desc}>
+                  {fmtAt(a.at)} · {a.mode === 'adaptive' ? 'Luyện điểm yếu' : 'Trắc nghiệm'}
+                </span>
+              </span>
+              <strong style={{ color: scoreColor(a.correct, a.total), fontSize: fs(16) }}>{a.correct}/{a.total}</strong>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button className="qghost" style={{ ...quizStyles.ghost, marginBottom: '16px' }} onClick={onBack}>
+        <Icon name="back" size={16} /> Quay lại
+      </button>
+    </>
+  )
+}
+
 function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRefresh, onExit }) {
-  const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz
+  const [mode, setMode] = useState('hub') // hub | mistakes | setup | quiz | history | retry
   const [quiz, setQuiz] = useState(null)
+  const [retryQs, setRetryQs] = useState([])
 
   if (mode === 'mistakes') {
     return (
@@ -1732,7 +1987,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
   }
 
   if (mode === 'quiz' && quiz) {
-        if (quiz.adaptive) {
+    if (quiz.adaptive) {
       return (
         <AdaptiveQuizScreen
           profileId={profileId}
@@ -1756,6 +2011,34 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
     )
   }
 
+  if (mode === 'history') {
+    return (
+      <QuizHistory
+        profileId={profileId}
+        onBack={() => setMode('hub')}
+        onRetry={(qs) => {
+          setRetryQs(qs)
+          setMode('retry')
+        }}
+      />
+    )
+  }
+
+  if (mode === 'retry') {
+    return (
+      <QuizScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={cefrLevel}
+        topic={{ type: 'random' }}
+        label="Làm lại câu sai"
+        count={retryQs.length}
+        preset={retryQs}
+        onExit={() => setMode('history')}
+      />
+    )
+  }
+
   return (
     <StepCard title="Ôn tập" subtitle="Chọn cách bạn muốn luyện hôm nay.">
       <style>{dropdownCss}</style>
@@ -1773,7 +2056,15 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
         <span style={hubStyles.icon}><Icon name="check" size={20} /></span>
         <span style={hubStyles.text}>
           <span style={hubStyles.title}>Bài tập trắc nghiệm</span>
-          <span style={hubStyles.desc}>AI tạo câu hỏi theo chủ đề bạn chọn hoặc ngẫu nhiên</span>
+          <span style={hubStyles.desc}>AI tạo câu hỏi theo chủ đề bạn chọn, hoặc luyện điểm yếu của bạn</span>
+        </span>
+      </button>
+
+      <button className="level-card" style={hubStyles.card} onClick={() => setMode('history')}>
+        <span style={hubStyles.icon}><Icon name="book" size={20} /></span>
+        <span style={hubStyles.text}>
+          <span style={hubStyles.title}>Xem lại bài đã làm</span>
+          <span style={hubStyles.desc}>Xem từng câu, đáp án và giải thích của các bài trắc nghiệm trước</span>
         </span>
       </button>
 
@@ -3181,7 +3472,7 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
   )
 }
 
-function AppContent({ settings }) {
+function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
     nativeLanguage:'',
@@ -3224,6 +3515,24 @@ function AppContent({ settings }) {
   const [notesForm, setNotesForm] = useState({ notes: '', enabled: true })
   const [notesBusy, setNotesBusy] = useState(false)
   const [notesMsg, setNotesMsg] = useState('')
+  const chatBoxRef = useRef(null)
+  const prevLenRef = useRef(0)
+
+  // Gắn vào khung chat: mỗi lần khung xuất hiện (vào app, quay về từ màn khác) tự cuộn xuống cuối
+  const setChatBox = useCallback((el) => {
+    chatBoxRef.current = el
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
+
+  // Có tin mới hoặc chấm "đang trả lời": cuộn xuống cuối (mượt khi thêm 1-2 tin, tức thì khi nạp cả đoạn chat)
+  useEffect(() => {
+    const el = chatBoxRef.current
+    const grew = chatHistory.length - prevLenRef.current
+    prevLenRef.current = chatHistory.length
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: grew > 0 && grew <= 2 ? 'smooth' : 'auto' })
+  }, [chatHistory.length, isChatLoading])
+
   useEffect(() => {
   window.api.getProfiles().then((res) => {
     setExistingProfiles(res.profiles || [])
@@ -3431,6 +3740,10 @@ useEffect(() => {
 useEffect(() => {
   refreshMistakes()
 }, [profileId])
+
+useEffect(() => {
+  onLoggedInChange && onLoggedInChange(step >= 5)
+}, [step])
 
 const loadConversations = async (pid) => {
   const res = await window.api.getConversations({ profileId: pid })
@@ -4077,8 +4390,18 @@ return (
                 style={styles.navItem}
                 onClick={() => {
                   setShowProfileMenu(false)
-                  handleOpenEditProfile()
+                  onOpenSettings && onOpenSettings()
                 }}
+              >
+                <Icon name="settings" size={15} /> Cài đặt
+              </button>
+              <button
+                className="nav-item"
+                style={styles.navItem}
+                onClick={() => {
+                  setShowProfileMenu(false)
+                  handleOpenEditProfile()
+                }}  
               >
                 <Icon name="edit" size={15} /> Chỉnh sửa thông tin
               </button>
@@ -4137,7 +4460,7 @@ return (
         </div>
       </div>
 
-      <div style={styles.chatBoxFull}>
+      <div ref={setChatBox} style={styles.chatBoxFull}>
         {chatHistory.length === 0 && !isChatLoading && (
           <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
             <p style={{ marginBottom: '14px' }}>Bắt đầu cuộc trò chuyện — thử một gợi ý:</p>
@@ -5161,7 +5484,7 @@ function SettingsModal({ settings, onChange, onClose }) {
 function App() {
   const [settings, setSettings] = useState(loadSettings)
   const [showSettings, setShowSettings] = useState(false)
-
+  const [loggedIn, setLoggedIn] = useState(false)
   useLayoutEffect(() => {
     const apply = () => {
       const isDark =
@@ -5190,14 +5513,23 @@ function App() {
 
   const updateSettings = (patch) => setSettings((prev) => ({ ...prev, ...patch }))
 
-  return (
+ return (
     <>
       <style>{scrollbarStyle}</style>
-      <style>{buttonCss}</style>
-      <AppContent settings={settings} />
-      <button style={{ ...settingsStyles.gear, display: 'flex', alignItems: 'center', justifyContent: 'center', }} onClick={() => setShowSettings(true)} title="Cài đặt">
-        <Icon name="settings" size={20} />
-      </button>
+      <AppContent
+        settings={settings}
+        onOpenSettings={() => setShowSettings(true)}
+        onLoggedInChange={setLoggedIn}
+      />
+      {!loggedIn && (
+        <button
+          style={{ ...settingsStyles.gear, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowSettings(true)}
+          title="Cài đặt"
+        >
+          <Icon name="settings" size={20} />
+        </button>
+      )}
       {showSettings && (
         <SettingsModal
           settings={settings}

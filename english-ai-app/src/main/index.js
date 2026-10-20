@@ -1424,6 +1424,80 @@ ${history.length ? `- Học viên đã làm các câu sau, KHÔNG lặp lại v�
     }
   })
 
+  ipcMain.handle('save-quiz-attempt', async (event, { profileId, mode, label, details }) => {
+    try {
+      const clip = (v, n) => String(v ?? '').slice(0, n)
+      const list = (Array.isArray(details) ? details : []).slice(0, 30).map((d) => ({
+        question: clip(d.question, 400),
+        options: (Array.isArray(d.options) ? d.options : []).slice(0, 5).map((o) => clip(o, 200)),
+        answer: Number(d.answer),
+        picked: d.picked == null ? null : Number(d.picked),
+        explanation: clip(d.explanation, 400),
+        skill: SKILL_IDS.includes(d.skill) ? d.skill : 'other',
+        difficulty: ['easy', 'medium', 'hard'].includes(d.difficulty) ? d.difficulty : null
+      }))
+      if (list.length === 0) return { success: false }
+      const correct = list.filter((d) => d.picked === d.answer).length
+      db.prepare(`
+        INSERT INTO quiz_attempts (profile_id, mode, label, total, correct, details) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(profileId, mode === 'adaptive' ? 'adaptive' : 'quiz', clip(label, 80), list.length, correct, JSON.stringify(list))
+      // giữ tối đa 100 bài gần nhất cho mỗi tài khoản
+      db.prepare(`
+        DELETE FROM quiz_attempts WHERE profile_id = ? AND id NOT IN (
+          SELECT id FROM quiz_attempts WHERE profile_id = ? ORDER BY id DESC LIMIT 100
+        )
+      `).run(profileId, profileId)
+      return { success: true }
+    } catch (error) {
+      console.error('Save attempt error:', error)
+      logError('save-attempt', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('get-quiz-attempts', async (event, { profileId }) => {
+    try {
+      const rows = db.prepare(`
+        SELECT id, mode, label, total, correct, datetime(created_at, 'localtime') AS at
+        FROM quiz_attempts WHERE profile_id = ? ORDER BY id DESC LIMIT 50
+      `).all(profileId)
+      return { success: true, attempts: rows }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false, attempts: [] }
+    }
+  })
+
+  ipcMain.handle('get-quiz-attempt', async (event, { profileId, id }) => {
+    try {
+      const row = db.prepare(`
+        SELECT id, mode, label, total, correct, details, datetime(created_at, 'localtime') AS at
+        FROM quiz_attempts WHERE id = ? AND profile_id = ?
+      `).get(id, profileId)
+      if (!row) return { success: false }
+      let details = []
+      try {
+        details = JSON.parse(row.details || '[]')
+      } catch {
+        details = []
+      }
+      return { success: true, attempt: { ...row, details } }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
+  ipcMain.handle('delete-quiz-attempt', async (event, { profileId, id }) => {
+    try {
+      db.prepare(`DELETE FROM quiz_attempts WHERE id = ? AND profile_id = ?`).run(id, profileId)
+      return { success: true }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+
   ipcMain.handle('generate-adaptive-quiz', async (event, { profileId, targetLanguage, nativeLanguage, cefrLevel }) => {
     try {
       const p = getProfile(cefrLevel)

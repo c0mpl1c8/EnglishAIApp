@@ -125,4 +125,17 @@ db.exec(`
   )
 `)
 addColumnIfMissing('vocabulary', 'folder_id', 'INTEGER')
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS quiz_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    mode TEXT,
+    label TEXT,
+    total INTEGER,
+    correct INTEGER,
+    details TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 export default db
