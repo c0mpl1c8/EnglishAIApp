@@ -40,6 +40,8 @@ const api = {
   getQuizAttempts: (data) => ipcRenderer.invoke('get-quiz-attempts', data),
   getQuizAttempt: (data) => ipcRenderer.invoke('get-quiz-attempt', data),
   deleteQuizAttempt: (data) => ipcRenderer.invoke('delete-quiz-attempt', data),
+  generateGameContent: (data) => ipcRenderer.invoke('generate-game-content', data),
+  saveVocabEntries: (data) => ipcRenderer.invoke('save-vocab-entries', data),
 }
 
 // Use `contextBridge` APIs to expose Electron APIs to

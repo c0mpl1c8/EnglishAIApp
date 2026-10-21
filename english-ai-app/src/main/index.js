@@ -263,17 +263,18 @@ function normalizeQuizQuestions(raw, allowedSkills) {
   return out
 }
 
-// Gỡ các câu hỏi hoàn chỉnh từ chuỗi JSON bị cắt dở hoặc sai cú pháp ở giữa
-function salvageQuestions(text) {
+// Gỡ các mục hoàn chỉnh từ chuỗi JSON bị cắt dở hoặc sai cú pháp ở giữa
+function salvageByKey(text, key = 'questions') {
   const clean = String(text || '').replace(/```json|```/g, '').trim()
   try {
     const parsed = JSON.parse(clean)
-    return Array.isArray(parsed) ? parsed : parsed.questions || []
+    const arr = Array.isArray(parsed) ? parsed : parsed?.[key]
+    return Array.isArray(arr) ? arr : []
   } catch {
     // tiếp tục gỡ từng đối tượng
   }
-  const qPos = clean.indexOf('"questions"')
-  const start = clean.indexOf('[', qPos >= 0 ? qPos : 0)
+  const kPos = clean.indexOf(`"${key}"`)
+  const start = clean.indexOf('[', kPos >= 0 ? kPos : 0)
   if (start < 0) return []
 
   const out = []
@@ -300,13 +301,20 @@ function salvageQuestions(text) {
         try {
           out.push(JSON.parse(clean.slice(objStart, i + 1)))
         } catch {
-          // bỏ qua câu bị lỗi, giữ các câu còn lại
+          // bỏ qua mục bị lỗi, giữ các mục còn lại
         }
         objStart = -1
       }
     }
   }
   return out
+}
+const salvageQuestions = (text) => salvageByKey(text, 'questions')
+
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+// Câu có chứa đúng nguyên dạng từ đó không (không phân biệt hoa thường)
+function sentenceHasWord(sentence, word) {
+  return new RegExp(`(^|[^\\p{L}\\p{N}])(${escapeRegex(word)})(?![\\p{L}\\p{N}])`, 'iu').test(sentence)
 }
 
 const tokenSet = (s) => new Set(normalizeAnswer(s).split(' ').filter((w) => w.length > 1))
@@ -1424,6 +1432,160 @@ ${history.length ? `- Học viên đã làm các câu sau, KHÔNG lặp lại v�
     }
   })
 
+    ipcMain.handle('generate-game-content', async (event, { profileId, kind, targetLanguage, nativeLanguage, cefrLevel, topic, count }) => {
+    try {
+      const p = getProfile(cefrLevel)
+      const type = topic?.type || 'random'
+      const key = (s) => String(s || '').toLowerCase().trim()
+
+      let focus
+      if (type === 'custom') {
+        focus = `Chủ đề do học viên chọn: "${cleanText(topic.value, 80)}". Mọi mục phải liên quan đến chủ đề này.`
+      } else if (type === 'job') {
+        const info = getLearnerLine(profileId)
+        focus = info
+          ? `Chọn nội dung thuộc lĩnh vực/sở thích của học viên theo thông tin dưới đây.${info}`
+          : `Chủ đề đa dạng, ví dụ: ${randomThemes(5)}.`
+      } else {
+        focus = `Chủ đề đa dạng, ví dụ: ${randomThemes(5)}.`
+      }
+
+      // ---------- Từ mới ----------
+      if (kind === 'words') {
+        const n = Math.min(44, Math.max(6, parseInt(count, 10) || 30))
+        const known = new Set()
+        const recent = []
+        db.prepare(`SELECT word FROM vocabulary WHERE profile_id = ? ORDER BY id DESC`).all(profileId).forEach((r) => {
+          known.add(key(r.word))
+          if (recent.length < 40) recent.push(r.word)
+        })
+        db.prepare(`SELECT text FROM game_seen WHERE profile_id = ? AND kind = 'word' ORDER BY id DESC LIMIT 1500`)
+          .all(profileId)
+          .forEach((r) => {
+            known.add(key(r.text))
+            if (recent.length < 80) recent.push(r.text)
+          })
+
+        const response = await generateWithRetry({
+          maxTokens: 4000,
+          temperature: 0.9,
+          contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo ${n + 8} MỤC TỪ VỰNG MỚI cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
+${focus}
+Độ khó: ${p.style}
+${recent.length ? `Học viên đã biết các từ sau, KHÔNG dùng lại: ${recent.join(', ')}` : ''}
+
+Quy tắc:
+- "word": từ hoặc cụm từ phổ biến (1-3 từ) bằng ${targetLanguage}, ở dạng từ điển, viết thường, không dấu chấm.
+- "meaning": nghĩa ngắn gọn (tối đa 8 từ) bằng ${nativeLanguage}.
+- "example": một câu ví dụ ngắn (6-14 từ) bằng ${targetLanguage}, chứa CHÍNH XÁC từ ở "word" (đúng nguyên dạng, không chia thì, không đổi số ít/nhiều).
+- Các từ thuộc nhiều loại từ và chủ đề khác nhau; nghĩa của các từ phải khác nhau rõ ràng (không có hai từ đồng nghĩa).
+Trả lời CHỈ bằng JSON: {"words":[{"word":"...","meaning":"...","example":"..."}]}`
+        })
+
+        const out = []
+        const usedWord = new Set()
+        const usedMeaning = new Set()
+        for (const w of salvageByKey(response.text, 'words')) {
+          const word = cleanText(w?.word, 40)
+          const meaning = cleanText(w?.meaning, 90)
+          const example = cleanText(w?.example, 200)
+          const k = key(word)
+          if (!word || !meaning || !example) continue
+          if (known.has(k) || usedWord.has(k) || usedMeaning.has(key(meaning))) continue
+          if (!sentenceHasWord(example, word)) continue
+          usedWord.add(k)
+          usedMeaning.add(key(meaning))
+          out.push({ word, meaning, example })
+        }
+        if (out.length < 6) throw new Error(`Game words: chỉ có ${out.length} từ hợp lệ`)
+
+        const picked = out.slice(0, n)
+        const ins = db.prepare(`INSERT INTO game_seen (profile_id, kind, text) VALUES (?, 'word', ?)`)
+        db.transaction(() => picked.forEach((w) => ins.run(profileId, w.word)))()
+        db.prepare(`
+          DELETE FROM game_seen WHERE profile_id = ? AND id NOT IN (
+            SELECT id FROM game_seen WHERE profile_id = ? ORDER BY id DESC LIMIT 3000
+          )
+        `).run(profileId, profileId)
+        return { success: true, words: picked }
+      }
+
+      // ---------- Câu có lỗi ----------
+      if (kind === 'spot') {
+        const n = Math.min(12, Math.max(4, parseInt(count, 10) || 10))
+        const seen = db.prepare(`SELECT text FROM game_seen WHERE profile_id = ? AND kind = 'sentence' ORDER BY id DESC LIMIT 150`)
+          .all(profileId)
+          .map((r) => r.text)
+
+        const response = await generateWithRetry({
+          maxTokens: 4000,
+          temperature: 0.9,
+          contents: `Bạn là gia sư ${targetLanguage}. Hãy tạo ${n + 4} bộ câu để học viên tập "tìm câu sai". Học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ CEFR ${cefrLevel}.
+${focus}
+Độ khó câu: ${p.style}
+
+Mỗi bộ gồm:
+- "correct": một câu đúng ngữ pháp, tự nhiên (8-16 từ).
+- "wrong": CÙNG câu đó nhưng sai ĐÚNG MỘT lỗi người học hay mắc (chia thì, hòa hợp chủ ngữ - động từ, mạo từ, giới từ, trật tự từ, chọn từ...), phần còn lại giữ nguyên. Lỗi phải rõ ràng, không mơ hồ.
+- "skill": một mã trong: ${SKILLS.filter((s) => s.id !== 'other').map((s) => `${s.id} (${s.label})`).join(', ')}.
+- "explanation": 1 câu ngắn (tối đa 25 từ) bằng ${nativeLanguage}, nói rõ lỗi gì và sửa thế nào.
+Không lặp lại ý giữa các bộ.
+${seen.length ? `Đã dùng, KHÔNG lặp lại:\n${seen.slice(0, 12).map((s) => `- ${s}`).join('\n')}` : ''}
+Trả lời CHỈ bằng JSON: {"items":[{"correct":"...","wrong":"...","skill":"preposition","explanation":"..."}]}`
+        })
+
+        const out = []
+        for (const r of salvageByKey(response.text, 'items')) {
+          const correct = cleanText(r?.correct, 200)
+          const wrong = cleanText(r?.wrong, 200)
+          if (!correct || !wrong || normalizeAnswer(correct) === normalizeAnswer(wrong)) continue
+          if (!isSimilar(wrong, correct)) continue // câu sai phải là bản sửa nhỏ của câu đúng
+          if (seen.some((s) => isSimilar(s, correct)) || out.some((o) => isSimilar(o.correct, correct))) continue
+          const skill = SKILL_IDS.includes(r?.skill) ? r.skill : skillFromCategory(String(r?.skill ?? ''))
+          out.push({ correct, wrong, skill, explanation: cleanText(r?.explanation, 200) })
+        }
+        if (out.length < 3) throw new Error(`Game spot: chỉ có ${out.length} bộ hợp lệ`)
+
+        const picked = out.slice(0, n)
+        const ins = db.prepare(`INSERT INTO game_seen (profile_id, kind, text) VALUES (?, 'sentence', ?)`)
+        db.transaction(() => picked.forEach((it) => ins.run(profileId, it.correct)))()
+        return { success: true, items: picked }
+      }
+
+      return { success: false }
+    } catch (error) {
+      console.error('Game content error:', error)
+      logError('game-content', error)
+      return { success: false, message: 'AI chưa tạo được nội dung. Bạn thử lại nhé.' }
+    }
+  })
+
+  ipcMain.handle('save-vocab-entries', async (event, { profileId, entries, folderId }) => {
+    try {
+      const list = (Array.isArray(entries) ? entries : []).slice(0, 60)
+      const fid = folderId
+        ? db.prepare(`SELECT id FROM vocab_folders WHERE id = ? AND profile_id = ?`).get(folderId, profileId)?.id ?? null
+        : null
+      const check = db.prepare(`SELECT id FROM vocabulary WHERE profile_id = ? AND word = ? COLLATE NOCASE`)
+      const ins = db.prepare(`
+        INSERT INTO vocabulary (profile_id, word, meaning, example_sentence, folder_id) VALUES (?, ?, ?, ?, ?)
+      `)
+      let added = 0
+      db.transaction(() => {
+        for (const e of list) {
+          const word = cleanText(e?.word, 40)
+          if (!word || check.get(profileId, word)) continue
+          ins.run(profileId, word, cleanText(e?.meaning, 120), cleanText(e?.example, 240), fid)
+          added++
+        }
+      })()
+      return { success: true, added }
+    } catch (error) {
+      console.error('DB error:', error)
+      return { success: false }
+    }
+  })
+  
   ipcMain.handle('save-quiz-attempt', async (event, { profileId, mode, label, details }) => {
     try {
       const clip = (v, n) => String(v ?? '').slice(0, n)

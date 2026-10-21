@@ -2003,38 +2003,241 @@ function makeClozeQuestions(items, allWords, n) {
     .filter(Boolean)
 }
 
-function ClozeGame({ profileId, onExit }) {
-  const [phase, setPhase] = useState('loading') // loading | empty | question | answered | done
+const fetchGameContent = ({ kind, profileId, profile, cefrLevel, topic, count }) =>
+  window.api.generateGameContent({
+    kind,
+    profileId,
+    targetLanguage: profile.targetLanguage,
+    nativeLanguage: profile.nativeLanguage,
+    cefrLevel,
+    topic,
+    count
+  })
+
+function buildSpotFromItems(items) {
+  return items
+    .map((it, i) => {
+      const others = items.filter((_, j) => j !== i).map((o) => o.correct).filter((s) => normText(s) !== normText(it.correct))
+      const third = shuffleArr(others)[0]
+      if (!third) return null
+      const options = shuffleArr([it.wrong, it.correct, third])
+      return {
+        skill: it.skill || 'other',
+        explanation: it.explanation || '',
+        wrong: it.wrong,
+        correct: it.correct,
+        options,
+        answer: options.indexOf(it.wrong)
+      }
+    })
+    .filter(Boolean)
+}
+
+function GameSetup({ title, intro, reviewTitle, reviewDesc, reviewReady, newTitle, newDesc, topicLabel, profile, onStart, onBack }) {
+  const [mode, setMode] = useState(reviewReady ? 'review' : 'new')
+  const [topicSel, setTopicSel] = useState('random')
+  const [custom, setCustom] = useState('')
+  const hasInfo = !!((profile.occupation || '').trim() || (profile.interests || '').trim())
+  const usingCustom = !!custom.trim()
+
+  const start = () =>
+    onStart({
+      mode,
+      topic: usingCustom
+        ? { type: 'custom', value: custom.trim() }
+        : topicSel === 'job' && hasInfo
+          ? { type: 'job' }
+          : { type: 'random' }
+    })
+
+  const rows = [
+    { id: 'review', icon: 'repeat', title: reviewTitle, desc: reviewDesc, ok: reviewReady },
+    { id: 'new', icon: 'sparkle', title: newTitle, desc: newDesc, ok: true }
+  ]
+
+  return (
+    <StepCard title={title} subtitle={intro}>
+      <style>{quizCss}</style>
+
+      <Field label="Chế độ">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {rows.map((r) => {
+            const active = mode === r.id
+            return (
+              <button
+                key={r.id}
+                className="qrow"
+                disabled={!r.ok}
+                style={{
+                  ...quizStyles.modeRow,
+                  ...(active ? quizStyles.modeRowActive : {}),
+                  ...(!r.ok ? { opacity: 0.55, cursor: 'not-allowed' } : {})
+                }}
+                onClick={() => setMode(r.id)}
+              >
+                <span style={quizStyles.modeIcon}><Icon name={r.icon} size={16} /></span>
+                <span style={hubStyles.text}>
+                  <span style={{ ...hubStyles.title, fontSize: fs(14) }}>{r.title}</span>
+                  <span style={hubStyles.desc}>{r.desc}</span>
+                </span>
+                <span style={{ ...quizStyles.radio, ...(active ? quizStyles.radioOn : {}) }}>
+                  {active && <Icon name="check" size={12} />}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+
+      {mode === 'new' && (
+        <Field label={topicLabel || 'Chủ đề'}>
+          <div style={onboardStyles.chips}>
+            <button
+              className="qchip"
+              style={{ ...quizStyles.chip, ...(!usingCustom && topicSel === 'random' ? quizStyles.chipOn : {}) }}
+              onClick={() => {
+                setTopicSel('random')
+                setCustom('')
+              }}
+            >
+              Ngẫu nhiên
+            </button>
+            <button
+              className="qchip"
+              disabled={!hasInfo}
+              style={{
+                ...quizStyles.chip,
+                ...(!usingCustom && topicSel === 'job' ? quizStyles.chipOn : {}),
+                ...(!hasInfo ? quizStyles.disabled : {})
+              }}
+              onClick={() => {
+                setTopicSel('job')
+                setCustom('')
+              }}
+              title={hasInfo ? '' : 'Điền nghề/sở thích ở "Chỉnh sửa thông tin"'}
+            >
+              Theo nghề / sở thích
+            </button>
+          </div>
+          <input
+            style={{ ...onboardStyles.fieldInput, marginTop: '10px', ...(usingCustom ? { border: '1.5px solid var(--accent)' } : {}) }}
+            maxLength={80}
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            placeholder="Hoặc tự nhập chủ đề, ví dụ: du lịch Nhật Bản"
+          />
+        </Field>
+      )}
+
+      <div style={{ ...onboardStyles.actions, marginTop: '8px' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onBack}>
+          <Icon name="back" size={16} /> Quay lại
+        </button>
+        <button className="qprimary" style={quizStyles.primary} onClick={start}>
+          Tiếp tục <Icon name="next" size={16} />
+        </button>
+      </div>
+    </StepCard>
+  )
+}
+
+// Màn chờ AI tạo nội dung và màn lỗi dùng chung cho cả ba trò
+function GameWait({ text }) {
+  return (
+    <div style={styles.container}>
+      <h2 style={styles.question}>{text}</h2>
+      <p style={{ color: 'var(--text-muted)', margin: 0, maxWidth: '380px' }}>Có thể mất 10 đến 30 giây.</p>
+    </div>
+  )
+}
+
+function GameError({ message, onRetry, onBack }) {
+  return (
+    <div style={styles.container}>
+      <style>{quizCss}</style>
+      <h2 style={styles.question}>Chưa tạo được nội dung</h2>
+      <p style={{ color: 'var(--text-muted)', margin: 0, maxWidth: '380px' }}>{message || 'AI có thể đang bận.'}</p>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button className="qghost" style={quizStyles.ghost} onClick={onBack}>Chọn lại</button>
+        <button className="qprimary" style={quizStyles.primary} onClick={onRetry}>Thử lại</button>
+      </div>
+    </div>
+  )
+}
+
+function ClozeGame({ profileId, profile, cefrLevel, onExit }) {
+  // loading | setup | generating | genError | question | answered | done
+  const [phase, setPhase] = useState('loading')
+  const [source, setSource] = useState('review')
   const [qs, setQs] = useState([])
   const [index, setIndex] = useState(0)
   const [picked, setPicked] = useState(null)
   const [score, setScore] = useState(0)
   const [hint, setHint] = useState(false)
   const [eligible, setEligible] = useState(0)
+  const [saveMsg, setSaveMsg] = useState('')
+  const [genErr, setGenErr] = useState('')
   const wordsRef = useRef([])
+  const cfgRef = useRef(null)
+  const alive = useRef(true)
 
-  const start = (words) => {
-    const items = buildCloze(words)
-    setEligible(items.length)
-    const list = makeClozeQuestions(items, words, 10)
-    if (list.length < 3) {
-      setPhase('empty')
-      return
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
     }
+  }, [])
+
+  useEffect(() => {
+    window.api.getVocabulary({ profileId }).then((res) => {
+      if (!alive.current) return
+      wordsRef.current = res.vocabulary || []
+      setEligible(buildCloze(wordsRef.current).length)
+      setPhase('setup')
+    })
+  }, [])
+
+  const begin = (list, src) => {
+    setSource(src)
     setQs(list)
     setIndex(0)
     setPicked(null)
     setScore(0)
     setHint(false)
+    setSaveMsg('')
     setPhase('question')
   }
 
-  useEffect(() => {
-    window.api.getVocabulary({ profileId }).then((res) => {
-      wordsRef.current = res.vocabulary || []
-      start(wordsRef.current)
-    })
-  }, [])
+  const run = async (cfg) => {
+    cfgRef.current = cfg
+    if (cfg.mode === 'review') {
+      const list = makeClozeQuestions(buildCloze(wordsRef.current), wordsRef.current, 10)
+      if (list.length < 3) {
+        setGenErr('Chưa đủ từ có câu ví dụ chứa đúng từ đó. Hãy chọn chế độ từ mới.')
+        setPhase('genError')
+        return
+      }
+      begin(list, 'review')
+      return
+    }
+    setPhase('generating')
+    setGenErr('')
+    const res = await fetchGameContent({ kind: 'words', profileId, profile, cefrLevel, topic: cfg.topic, count: 14 })
+    if (!alive.current) return
+    if (!res.success) {
+      setGenErr(res.message || '')
+      setPhase('genError')
+      return
+    }
+    const items = buildCloze(res.words.map((w, i) => ({ id: `n${i}`, word: w.word, meaning: w.meaning, example_sentence: w.example })))
+    const list = makeClozeQuestions(items, res.words, 10)
+    if (list.length < 3) {
+      setGenErr('AI trả về quá ít câu dùng được.')
+      setPhase('genError')
+      return
+    }
+    begin(list, 'new')
+  }
 
   const choose = (i) => {
     if (phase !== 'question') return
@@ -2056,6 +2259,16 @@ function ClozeGame({ profileId, onExit }) {
     setPhase('question')
   }
 
+  const saveNew = async () => {
+    const res = await window.api.saveVocabEntries({
+      profileId,
+      entries: qs.map((q) => ({ word: q.word, meaning: q.meaning, example: q.full }))
+    })
+    setSaveMsg(
+      res.success ? (res.added > 0 ? `Đã lưu ${res.added} từ vào flashcard.` : 'Các từ này đã có trong flashcard.') : 'Chưa lưu được, bạn thử lại nhé.'
+    )
+  }
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Enter' && phase === 'answered') next()
@@ -2072,19 +2285,30 @@ function ClozeGame({ profileId, onExit }) {
     </div>
   )
 
-  if (phase === 'loading') return wrap(<p>Đang chuẩn bị câu hỏi...</p>)
+  if (phase === 'loading') return wrap(<p>Đang chuẩn bị...</p>)
 
-  if (phase === 'empty') {
-    return wrap(
-      <>
-        <h2 style={styles.question}>Chưa đủ dữ liệu để chơi</h2>
-        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
-          Trò này cần ít nhất 3 từ có câu ví dụ chứa đúng từ đó, và tổng cộng từ 4 từ trở lên (hiện có {eligible} từ dùng được).
-          Hãy thêm từ trong mục Từ vựng, AI sẽ viết câu ví dụ cho bạn.
-        </p>
-        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
-      </>
+  if (phase === 'setup') {
+    return (
+      <GameSetup
+        title="Điền từ vào câu"
+        intro="Chọn từ đúng cho chỗ trống trong câu ví dụ."
+        reviewTitle="Ôn từ của tôi"
+        reviewDesc={`Dùng câu ví dụ trong flashcard (${eligible} từ dùng được)`}
+        reviewReady={eligible >= 3 && wordsRef.current.length >= 4}
+        newTitle="Từ mới (AI tạo)"
+        newDesc="AI tạo từ chưa có trong flashcard của bạn, kèm câu ví dụ"
+        topicLabel="Chủ đề từ mới"
+        profile={profile}
+        onStart={run}
+        onBack={onExit}
+      />
     )
+  }
+
+  if (phase === 'generating') return <GameWait text="AI đang tạo từ mới..." />
+
+  if (phase === 'genError') {
+    return <GameError message={genErr} onRetry={() => run(cfgRef.current)} onBack={() => setPhase('setup')} />
   }
 
   if (phase === 'done') {
@@ -2095,9 +2319,33 @@ function ClozeGame({ profileId, onExit }) {
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>
           {score / qs.length >= 0.8 ? 'Rất tốt!' : score / qs.length >= 0.5 ? 'Khá ổn, thử thêm một lượt nhé.' : 'Hãy ôn lại các từ này trong mục Từ vựng.'}
         </p>
+
+        {source === 'new' && (
+          <div style={{ ...practiceStyles.card, maxWidth: '420px' }}>
+            <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '6px' }}>Từ trong bài này</div>
+            {qs.map((q, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: fs(13), padding: '3px 0' }}>
+                <strong>{q.word}</strong>
+                <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{q.meaning}</span>
+              </div>
+            ))}
+            <button
+              className="qghost"
+              style={{ ...quizStyles.ghost, marginTop: '8px', border: '1.5px solid var(--border)', ...(saveMsg ? { opacity: 0.6 } : {}) }}
+              onClick={saveNew}
+              disabled={!!saveMsg}
+            >
+              <Icon name="plus" size={14} /> Lưu {qs.length} từ vào flashcard
+            </button>
+            {saveMsg && <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginTop: '6px' }}>{saveMsg}</div>}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
-          <button className="qprimary" style={quizStyles.primary} onClick={() => start(wordsRef.current)}>Chơi lại</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={() => setPhase('setup')}>Đổi chế độ</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={() => run(cfgRef.current)}>
+            {source === 'new' ? 'Bộ từ mới khác' : 'Chơi lại'}
+          </button>
         </div>
       </>
     )
@@ -2116,7 +2364,7 @@ function ClozeGame({ profileId, onExit }) {
     <>
       <ProgressDots current={index + 1} total={qs.length} />
       <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
-        Điền từ vào câu · Câu {index + 1}/{qs.length}
+        Điền từ vào câu · {source === 'new' ? 'Từ mới' : 'Từ của bạn'} · Câu {index + 1}/{qs.length}
       </p>
 
       {!answered && (
@@ -2146,6 +2394,7 @@ function ClozeGame({ profileId, onExit }) {
     </>
   )
 }
+
 
 // --- Tìm câu sai ---
 function buildSpotRounds(mistakes, vocab, n) {
@@ -2181,20 +2430,38 @@ function buildSpotRounds(mistakes, vocab, n) {
   return rounds
 }
 
-function SpotGame({ profileId, onExit }) {
-  const [phase, setPhase] = useState('loading') // loading | empty | question | answered | done
+function SpotGame({ profileId, profile, cefrLevel, onExit }) {
+  // loading | setup | generating | genError | question | answered | done
+  const [phase, setPhase] = useState('loading')
+  const [source, setSource] = useState('review')
   const [rounds, setRounds] = useState([])
   const [index, setIndex] = useState(0)
   const [picked, setPicked] = useState(null)
   const [score, setScore] = useState(0)
+  const [genErr, setGenErr] = useState('')
+  const [reviewCount, setReviewCount] = useState(0)
   const dataRef = useRef({ mistakes: [], vocab: [] })
+  const cfgRef = useRef(null)
+  const alive = useRef(true)
 
-  const start = () => {
-    const list = buildSpotRounds(dataRef.current.mistakes, dataRef.current.vocab, 10)
-    if (list.length === 0) {
-      setPhase('empty')
-      return
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
     }
+  }, [])
+
+  useEffect(() => {
+    Promise.all([window.api.getMistakes({ profileId }), window.api.getVocabulary({ profileId })]).then(([m, v]) => {
+      if (!alive.current) return
+      dataRef.current = { mistakes: m.mistakes || [], vocab: v.vocabulary || [] }
+      setReviewCount(buildSpotRounds(dataRef.current.mistakes, dataRef.current.vocab, 10).length)
+      setPhase('setup')
+    })
+  }, [])
+
+  const begin = (list, src) => {
+    setSource(src)
     setRounds(list)
     setIndex(0)
     setPicked(null)
@@ -2202,12 +2469,30 @@ function SpotGame({ profileId, onExit }) {
     setPhase('question')
   }
 
-  useEffect(() => {
-    Promise.all([window.api.getMistakes({ profileId }), window.api.getVocabulary({ profileId })]).then(([m, v]) => {
-      dataRef.current = { mistakes: m.mistakes || [], vocab: v.vocabulary || [] }
-      start()
-    })
-  }, [])
+  const run = async (cfg) => {
+    cfgRef.current = cfg
+    if (cfg.mode === 'review') {
+      const list = buildSpotRounds(dataRef.current.mistakes, dataRef.current.vocab, 10)
+      if (list.length === 0) {
+        setGenErr('Chưa đủ lỗi sai để chơi. Hãy chọn chế độ câu mới.')
+        setPhase('genError')
+        return
+      }
+      begin(list, 'review')
+      return
+    }
+    setPhase('generating')
+    setGenErr('')
+    const res = await fetchGameContent({ kind: 'spot', profileId, profile, cefrLevel, topic: cfg.topic, count: 10 })
+    if (!alive.current) return
+    const list = res.success ? buildSpotFromItems(res.items) : []
+    if (list.length < 3) {
+      setGenErr(res.message || 'AI trả về quá ít bộ câu dùng được.')
+      setPhase('genError')
+      return
+    }
+    begin(list, 'new')
+  }
 
   const choose = (i) => {
     if (phase !== 'question') return
@@ -2245,18 +2530,30 @@ function SpotGame({ profileId, onExit }) {
     </div>
   )
 
-  if (phase === 'loading') return wrap(<p>Đang chuẩn bị câu hỏi...</p>)
+  if (phase === 'loading') return wrap(<p>Đang chuẩn bị...</p>)
 
-  if (phase === 'empty') {
-    return wrap(
-      <>
-        <h2 style={styles.question}>Chưa đủ dữ liệu để chơi</h2>
-        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
-          Trò này dùng các lỗi bạn từng mắc trong lúc trò chuyện. Hãy chat thêm để AI ghi nhận lỗi (cần ít nhất 2 lỗi khác nhau, hoặc 1 lỗi và 1 từ có câu ví dụ).
-        </p>
-        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
-      </>
+  if (phase === 'setup') {
+    return (
+      <GameSetup
+        title="Tìm câu sai"
+        intro="Trong ba câu, tìm câu có lỗi."
+        reviewTitle="Lỗi của tôi"
+        reviewDesc={reviewCount > 0 ? 'Dùng các câu bạn từng viết sai khi trò chuyện' : 'Chưa đủ lỗi sai được ghi nhận'}
+        reviewReady={reviewCount > 0}
+        newTitle="Câu mới (AI tạo)"
+        newDesc="AI viết câu đúng và câu có một lỗi thường gặp ở trình độ của bạn"
+        topicLabel="Chủ đề câu"
+        profile={profile}
+        onStart={run}
+        onBack={onExit}
+      />
     )
+  }
+
+  if (phase === 'generating') return <GameWait text="AI đang viết câu mới..." />
+
+  if (phase === 'genError') {
+    return <GameError message={genErr} onRetry={() => run(cfgRef.current)} onBack={() => setPhase('setup')} />
   }
 
   if (phase === 'done') {
@@ -2265,11 +2562,13 @@ function SpotGame({ profileId, onExit }) {
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{rounds.length}</div>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>
-          {score / rounds.length >= 0.8 ? 'Mắt bạn tinh đấy!' : 'Những lỗi này vẫn nằm trong lịch ôn của bạn, hãy thử lại sau.'}
+          {score / rounds.length >= 0.8 ? 'Mắt bạn tinh đấy!' : 'Xem lại phần giải thích và thử một lượt nữa nhé.'}
         </p>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
-          <button className="qprimary" style={quizStyles.primary} onClick={start}>Chơi lại</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={() => setPhase('setup')}>Đổi chế độ</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={() => run(cfgRef.current)}>
+            {source === 'new' ? 'Bộ câu mới khác' : 'Chơi lại'}
+          </button>
         </div>
       </>
     )
@@ -2290,10 +2589,7 @@ function SpotGame({ profileId, onExit }) {
     <>
       <ProgressDots current={index + 1} total={rounds.length} />
       <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
-        Tìm câu sai · Câu {index + 1}/{rounds.length}
-      </p>
-      <p style={{ margin: 0, fontSize: fs(12), color: 'var(--text-muted)', maxWidth: '420px' }}>
-        Một trong ba câu là câu bạn từng viết sai. Hãy tìm ra nó.
+        Tìm câu sai · {source === 'new' ? 'Câu mới' : 'Lỗi của bạn'} · Câu {index + 1}/{rounds.length}
       </p>
 
       <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
@@ -2316,8 +2612,10 @@ function SpotGame({ profileId, onExit }) {
 const MATCH_ROUND = 6
 const MATCH_SECONDS = 60
 
-function MatchGame({ profileId, onExit }) {
-  const [phase, setPhase] = useState('loading') // loading | empty | ready | playing | done
+function MatchGame({ profileId, profile, cefrLevel, onExit }) {
+  // loading | setup | generating | genError | ready | playing | done
+  const [phase, setPhase] = useState('loading')
+  const [source, setSource] = useState('review')
   const [pairs, setPairs] = useState([])
   const [meanings, setMeanings] = useState([])
   const [matched, setMatched] = useState(new Set())
@@ -2332,29 +2630,80 @@ function MatchGame({ profileId, onExit }) {
   const [timeLeft, setTimeLeft] = useState(MATCH_SECONDS)
   const [best, setBest] = useState(0)
   const [newBest, setNewBest] = useState(false)
+  const [reviewCount, setReviewCount] = useState(0)
+  const [genErr, setGenErr] = useState('')
+  const [saveMsg, setSaveMsg] = useState('')
+  const vocabRef = useRef([])
   const cardsRef = useRef([])
   const deckRef = useRef([])
   const posRef = useRef(0)
+  const seenRef = useRef(new Map())
+  const cfgRef = useRef(null)
+  const alive = useRef(true)
   const bestKey = `matchBest_${profileId}`
 
   useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
+
+  const uniqueByMeaning = (list) => {
+    const seen = new Set()
+    return list.filter((w) => {
+      const k = normText(w.meaning)
+      if (!String(w.word || '').trim() || !k || seen.has(k)) return false
+      seen.add(k)
+      return true
+    })
+  }
+
+  useEffect(() => {
     window.api.getVocabulary({ profileId }).then((res) => {
-      const seen = new Set()
-      const cards = (res.vocabulary || []).filter((w) => {
-        const k = normText(w.meaning)
-        if (!String(w.word || '').trim() || !k || seen.has(k)) return false
-        seen.add(k)
-        return true
-      })
-      cardsRef.current = cards
+      if (!alive.current) return
+      vocabRef.current = res.vocabulary || []
+      setReviewCount(uniqueByMeaning(vocabRef.current).length)
       try {
         setBest(Number(localStorage.getItem(bestKey) || 0))
       } catch {
         setBest(0)
       }
-      setPhase(cards.length < MATCH_ROUND ? 'empty' : 'ready')
+      setPhase('setup')
     })
   }, [])
+
+  const run = async (cfg) => {
+    cfgRef.current = cfg
+    setGenErr('')
+    setSaveMsg('')
+    if (cfg.mode === 'review') {
+      const cards = uniqueByMeaning(vocabRef.current)
+      if (cards.length < MATCH_ROUND) {
+        setGenErr(`Cần ít nhất ${MATCH_ROUND} từ có nghĩa khác nhau. Hãy chọn chế độ từ mới.`)
+        setPhase('genError')
+        return
+      }
+      cardsRef.current = cards
+      setSource('review')
+      setPhase('ready')
+      return
+    }
+    setPhase('generating')
+    const res = await fetchGameContent({ kind: 'words', profileId, profile, cefrLevel, topic: cfg.topic, count: 42 })
+    if (!alive.current) return
+    const cards = res.success
+      ? uniqueByMeaning(res.words.map((w, i) => ({ id: `n${i}`, word: w.word, meaning: w.meaning, example_sentence: w.example })))
+      : []
+    if (cards.length < MATCH_ROUND) {
+      setGenErr(res.message || 'AI trả về quá ít từ dùng được.')
+      setPhase('genError')
+      return
+    }
+    cardsRef.current = cards
+    setSource('new')
+    setPhase('ready')
+  }
 
   const deal = () => {
     if (posRef.current + MATCH_ROUND > deckRef.current.length) {
@@ -2363,6 +2712,7 @@ function MatchGame({ profileId, onExit }) {
     }
     const slice = deckRef.current.slice(posRef.current, posRef.current + MATCH_ROUND)
     posRef.current += MATCH_ROUND
+    slice.forEach((c) => seenRef.current.set(c.id, c))
     setPairs(slice)
     setMeanings(shuffleArr(slice))
     setMatched(new Set())
@@ -2373,12 +2723,14 @@ function MatchGame({ profileId, onExit }) {
   const startGame = () => {
     deckRef.current = shuffleArr(cardsRef.current)
     posRef.current = 0
+    seenRef.current = new Map()
     setScore(0)
     setCombo(0)
     setBestCombo(0)
     setRight(0)
     setWrong(0)
     setNewBest(false)
+    setSaveMsg('')
     setFlash(null)
     setTimeLeft(MATCH_SECONDS)
     deal()
@@ -2438,6 +2790,14 @@ function MatchGame({ profileId, onExit }) {
     }
   }
 
+  const saveSeen = async () => {
+    const entries = [...seenRef.current.values()].map((c) => ({ word: c.word, meaning: c.meaning, example: c.example_sentence }))
+    const res = await window.api.saveVocabEntries({ profileId, entries })
+    setSaveMsg(
+      res.success ? (res.added > 0 ? `Đã lưu ${res.added} từ vào flashcard.` : 'Các từ này đã có trong flashcard.') : 'Chưa lưu được, bạn thử lại nhé.'
+    )
+  }
+
   const tile = (id, side) => {
     const isMatched = matched.has(id)
     const isSel = side === 'w' ? selW === id : selM === id
@@ -2468,30 +2828,48 @@ function MatchGame({ profileId, onExit }) {
 
   if (phase === 'loading') return wrap(<p>Đang chuẩn bị...</p>)
 
-  if (phase === 'empty') {
-    return wrap(
-      <>
-        <h2 style={styles.question}>Chưa đủ từ để chơi</h2>
-        <p style={{ color: 'var(--text-muted)', maxWidth: '400px', margin: 0, lineHeight: 1.6 }}>
-          Trò này cần ít nhất {MATCH_ROUND} từ có nghĩa khác nhau. Hãy trò chuyện thêm hoặc thêm từ trong mục Từ vựng.
-        </p>
-        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
-      </>
+  if (phase === 'setup') {
+    return (
+      <GameSetup
+        title="Ghép từ 60 giây"
+        intro="Ghép từ với nghĩa đúng, càng nhanh càng nhiều điểm."
+        reviewTitle="Ôn từ của tôi"
+        reviewDesc={
+          reviewCount >= MATCH_ROUND
+            ? `Dùng ${reviewCount} từ trong flashcard${reviewCount < 18 ? ' (kho còn ít nên sẽ lặp lại)' : ''}`
+            : `Cần ít nhất ${MATCH_ROUND} từ khác nghĩa (hiện có ${reviewCount})`
+        }
+        reviewReady={reviewCount >= MATCH_ROUND}
+        newTitle="Từ mới (AI tạo)"
+        newDesc="AI tạo khoảng 40 từ chưa có trong flashcard, không lặp lại các lần trước"
+        topicLabel="Chủ đề từ mới"
+        profile={profile}
+        onStart={run}
+        onBack={onExit}
+      />
     )
+  }
+
+  if (phase === 'generating') return <GameWait text="AI đang tạo từ mới..." />
+
+  if (phase === 'genError') {
+    return <GameError message={genErr} onRetry={() => run(cfgRef.current)} onBack={() => setPhase('setup')} />
   }
 
   if (phase === 'ready') {
     return wrap(
       <>
-        <h2 style={styles.question}>Ghép từ 60 giây</h2>
+        <h2 style={styles.question}>Sẵn sàng?</h2>
         <div style={{ ...practiceStyles.card, maxWidth: '420px', fontSize: fs(14), lineHeight: 1.7 }}>
           <div>Ghép mỗi từ ở cột trái với nghĩa đúng ở cột phải.</div>
           <div>Ghép đúng liên tiếp để nhận thêm điểm combo.</div>
           <div>Ghép sai sẽ mất 2 giây và reset combo.</div>
-          <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: fs(12) }}>Điểm cao nhất của bạn: {best}</div>
+          <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: fs(12) }}>
+            {source === 'new' ? `Bộ từ mới: ${cardsRef.current.length} từ` : `Kho của bạn: ${cardsRef.current.length} từ`} · Điểm cao nhất: {best}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={() => setPhase('setup')}>Đổi chế độ</button>
           <button className="qprimary" style={quizStyles.primary} onClick={startGame}>
             Bắt đầu <Icon name="next" size={16} />
           </button>
@@ -2516,8 +2894,24 @@ function MatchGame({ profileId, onExit }) {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Điểm cao nhất</span><strong>{best}</strong></div>
         </div>
+
+        {source === 'new' && (
+          <div style={{ textAlign: 'center' }}>
+            <button
+              className="qghost"
+              style={{ ...quizStyles.ghost, border: '1.5px solid var(--border)', ...(saveMsg ? { opacity: 0.6 } : {}) }}
+              onClick={saveSeen}
+              disabled={!!saveMsg}
+            >
+              <Icon name="plus" size={14} /> Lưu {seenRef.current.size} từ đã gặp vào flashcard
+            </button>
+            {saveMsg && <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginTop: '6px' }}>{saveMsg}</div>}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost" style={quizStyles.ghost} onClick={() => setPhase('setup')}>Đổi chế độ</button>
           <button className="qprimary" style={quizStyles.primary} onClick={startGame}>Chơi lại</button>
         </div>
       </>
@@ -2670,9 +3064,9 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
     )
   }
 
-  if (mode === 'cloze') return <ClozeGame profileId={profileId} onExit={back} />
-  if (mode === 'spot') return <SpotGame profileId={profileId} onExit={back} />
-  if (mode === 'match') return <MatchGame profileId={profileId} onExit={back} />
+  if (mode === 'cloze') return <ClozeGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={back} />
+  if (mode === 'spot') return <SpotGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={back} />
+  if (mode === 'match') return <MatchGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={back} />
 
   return (
     <StepCard title="Ôn tập" subtitle="Chọn cách bạn muốn luyện hôm nay.">
@@ -2706,9 +3100,9 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, onRe
       <div>
         <div style={onboardStyles.fieldLabel}>Trò chơi</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <HubRow icon="edit" title="Điền từ vào câu" desc="Chọn từ đúng cho chỗ trống trong câu ví dụ của bạn" onClick={() => setMode('cloze')} />
-          <HubRow icon="warning" title="Tìm câu sai" desc="Tìm câu bạn từng viết sai trong 3 câu" onClick={() => setMode('spot')} />
-          <HubRow icon="clock" title="Ghép từ 60 giây" desc="Ghép từ với nghĩa nhanh nhất, càng liên tiếp càng nhiều điểm" onClick={() => setMode('match')} />
+          <HubRow icon="edit" title="Điền từ vào câu" desc="Từ của bạn hoặc từ mới do AI tạo" onClick={() => setMode('cloze')} />
+          <HubRow icon="warning" title="Tìm câu sai" desc="Lỗi của bạn hoặc câu mới do AI tạo" onClick={() => setMode('spot')} />
+          <HubRow icon="clock" title="Ghép từ 60 giây" desc="Từ của bạn hoặc từ mới do AI tạo, càng liên tiếp càng nhiều điểm" onClick={() => setMode('match')} />
         </div>
       </div>
 

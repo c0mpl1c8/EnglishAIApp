@@ -138,4 +138,13 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS game_seen (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER,
+    kind TEXT,
+    text TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 export default db
