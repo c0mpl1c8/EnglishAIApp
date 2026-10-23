@@ -25,6 +25,7 @@ const api = {
   saveLearnerNotes: (data) => ipcRenderer.invoke('save-learner-notes', data),
   refreshLearnerNotes: (data) => ipcRenderer.invoke('refresh-learner-notes', data),
   generateQuiz: (data) => ipcRenderer.invoke('generate-quiz', data),
+  generateStructureQuiz: (data) => ipcRenderer.invoke('generate-structure-quiz', data),
   getProgress: (data) => ipcRenderer.invoke('get-progress', data),
   getProgressInsight: (data) => ipcRenderer.invoke('get-progress-insight', data),
   recordSkillEvent: (data) => ipcRenderer.invoke('record-skill-event', data),

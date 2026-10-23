@@ -93,6 +93,7 @@ const iconPaths = {
   trend: ['m22 7-8.5 8.5-5-5L2 17', 'M16 7h6v6'],
   folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
   clock: ['M12 6v6l4 2', 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z'],
+  layers: ['m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z', 'm22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65', 'm22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65'],
   search: ['M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16z', 'm21 21-4.3-4.3'],
   trash: ['M3 6h18', 'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2', 'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6'],
   user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'],
@@ -1249,7 +1250,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   )
 }
 
-function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, onExit }) {
+ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, loader, onExit }) {
   // loading | question | answered | done | error
   const [phase, setPhase] = useState('loading')
   const [questions, setQuestions] = useState([])
@@ -1273,14 +1274,16 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset
       setPhase('question')
       return
     }
-    const res = await window.api.generateQuiz({
-      profileId,
-      targetLanguage: profile.targetLanguage,
-      nativeLanguage: profile.nativeLanguage,
-      cefrLevel,
-      topic,
-      count
-    })
+       const res = loader
+      ? await loader()
+      : await window.api.generateQuiz({
+          profileId,
+          targetLanguage: profile.targetLanguage,
+          nativeLanguage: profile.nativeLanguage,
+          cefrLevel,
+          topic,
+          count
+        })
     if (res.success && res.questions.length > 0) {
       setQuestions(res.questions)
       setIndex(0)
@@ -1405,7 +1408,7 @@ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset
       <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
         Câu {index + 1}/{questions.length} · {label}
       </p>
-
+      {q.structure && <span style={quizStyles.tag}>{q.structure}</span>}
       <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
 
       <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2961,6 +2964,356 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
         <Icon name="back" size={16} /> Thoát
       </button>
     </>
+  )
+}
+
+const STRUCTURES = [
+  // ===== Các thì =====
+  { id: 'present_simple', group: 'Các thì', level: 'A1', skill: 'tense', title: 'Hiện tại đơn',
+    formula: ['S + V(s/es)', 'S + do/does not + V'],
+    use: 'Thói quen, sự thật hiển nhiên, lịch trình cố định.',
+    examples: [['She works in a bank every day.', 'Cô ấy làm việc ở ngân hàng mỗi ngày.'], ['Water boils at 100 degrees.', 'Nước sôi ở 100 độ.']] },
+  { id: 'present_continuous', group: 'Các thì', level: 'A1', skill: 'tense', title: 'Hiện tại tiếp diễn',
+    formula: ['S + am/is/are + V-ing'],
+    use: 'Hành động đang diễn ra lúc nói, hoặc kế hoạch gần đã sắp xếp.',
+    examples: [['I am studying English now.', 'Bây giờ tôi đang học tiếng Anh.'], ['We are meeting the client tomorrow.', 'Ngày mai chúng tôi gặp khách hàng.']] },
+  { id: 'past_simple', group: 'Các thì', level: 'A2', skill: 'tense', title: 'Quá khứ đơn',
+    formula: ['S + V2/V-ed', 'S + did not + V'],
+    use: 'Hành động đã xảy ra và kết thúc trong quá khứ.',
+    examples: [['I visited Hanoi last year.', 'Năm ngoái tôi đã đến Hà Nội.'], ["He didn't call me yesterday.", 'Hôm qua anh ấy không gọi cho tôi.']] },
+  { id: 'past_continuous', group: 'Các thì', level: 'A2', skill: 'tense', title: 'Quá khứ tiếp diễn',
+    formula: ['S + was/were + V-ing'],
+    use: 'Hành động đang diễn ra tại một thời điểm trong quá khứ, hoặc bị một hành động khác cắt ngang.',
+    examples: [['I was cooking when he called.', 'Tôi đang nấu ăn thì anh ấy gọi.'], ['They were watching TV at 8 p.m. last night.', 'Tối qua lúc 8 giờ họ đang xem tivi.']] },
+  { id: 'future_forms', group: 'Các thì', level: 'A2', skill: 'tense', title: 'Tương lai: will và be going to',
+    formula: ['will + V', 'S + am/is/are going to + V'],
+    use: 'will: quyết định ngay lúc nói, lời hứa, dự đoán. be going to: dự định đã có từ trước, hoặc dự đoán có dấu hiệu.',
+    examples: [["I'll help you carry that bag.", 'Để tôi giúp bạn xách cái túi đó.'], ['We are going to travel to Da Nang next month.', 'Tháng sau chúng tôi sẽ đi Đà Nẵng.']] },
+  { id: 'present_perfect', group: 'Các thì', level: 'B1', skill: 'tense', title: 'Hiện tại hoàn thành',
+    formula: ['S + have/has + V3'],
+    use: 'Trải nghiệm, hoặc hành động bắt đầu trong quá khứ và còn liên quan đến hiện tại (for, since, already, yet, ever, never).',
+    examples: [['I have lived here for five years.', 'Tôi đã sống ở đây được năm năm.'], ['She has never eaten sushi.', 'Cô ấy chưa bao giờ ăn sushi.']] },
+  { id: 'past_perfect', group: 'Các thì', level: 'B2', skill: 'tense', title: 'Quá khứ hoàn thành',
+    formula: ['S + had + V3'],
+    use: 'Hành động xảy ra trước một hành động hoặc mốc khác trong quá khứ.',
+    examples: [['When I arrived, the train had already left.', 'Khi tôi đến, tàu đã rời đi rồi.'], ['She said she had finished the report.', 'Cô ấy nói cô ấy đã làm xong báo cáo.']] },
+
+  // ===== Câu điều kiện và ước muốn =====
+  { id: 'cond_1', group: 'Câu điều kiện & ước muốn', level: 'A2', skill: 'structure', title: 'Câu điều kiện loại 1',
+    formula: ['If + hiện tại đơn, S + will + V'],
+    use: 'Điều kiện có thể xảy ra ở hiện tại hoặc tương lai.',
+    examples: [['If it rains, we will stay at home.', 'Nếu trời mưa, chúng tôi sẽ ở nhà.'], ['If you study hard, you will pass the exam.', 'Nếu bạn học chăm, bạn sẽ đậu kỳ thi.']] },
+  { id: 'cond_2', group: 'Câu điều kiện & ước muốn', level: 'B1', skill: 'structure', title: 'Câu điều kiện loại 2',
+    formula: ['If + quá khứ đơn, S + would + V'],
+    use: 'Điều kiện không có thật hoặc khó xảy ra ở hiện tại. Với to be thường dùng were cho mọi ngôi.',
+    examples: [['If I had more time, I would learn Japanese.', 'Nếu có nhiều thời gian hơn, tôi sẽ học tiếng Nhật.'], ['If I were you, I would accept the offer.', 'Nếu tôi là bạn, tôi sẽ nhận lời đề nghị.']] },
+  { id: 'cond_3', group: 'Câu điều kiện & ước muốn', level: 'B2', skill: 'structure', title: 'Câu điều kiện loại 3',
+    formula: ['If + quá khứ hoàn thành, S + would have + V3'],
+    use: 'Điều kiện không có thật trong quá khứ, nói về hệ quả đã không xảy ra.',
+    examples: [['If she had studied, she would have passed the test.', 'Nếu cô ấy đã học, cô ấy đã đậu bài kiểm tra.'], ["If we had left earlier, we wouldn't have missed the flight.", 'Nếu chúng tôi đi sớm hơn, chúng tôi đã không lỡ chuyến bay.']] },
+  { id: 'wish', group: 'Câu điều kiện & ước muốn', level: 'B1', skill: 'structure', title: 'Câu ước (wish)',
+    formula: ['S + wish + quá khứ đơn  (điều trái với hiện tại)', 'S + wish + had + V3  (tiếc chuyện đã qua)'],
+    use: 'Ước điều trái với hiện tại, hoặc tiếc nuối về chuyện đã xảy ra.',
+    examples: [['I wish I lived near the sea.', 'Ước gì tôi sống gần biển.'], ['I wish I had called her yesterday.', 'Giá mà hôm qua tôi đã gọi cho cô ấy.']] },
+
+  // ===== Bị động và câu gián tiếp =====
+  { id: 'passive', group: 'Bị động & câu gián tiếp', level: 'B1', skill: 'structure', title: 'Câu bị động',
+    formula: ['S + be + V3 (+ by + O)'],
+    use: 'Nhấn mạnh hành động hoặc đối tượng chịu tác động, khi người thực hiện không quan trọng hoặc không rõ.',
+    examples: [['English is spoken all over the world.', 'Tiếng Anh được nói trên khắp thế giới.'], ['The window was broken by a boy.', 'Cửa sổ bị một cậu bé làm vỡ.']] },
+  { id: 'causative', group: 'Bị động & câu gián tiếp', level: 'B2', skill: 'structure', title: 'Nhờ ai làm gì (have/get)',
+    formula: ['S + have + O + V3', 'S + get + O + V3'],
+    use: 'Nói về việc nhờ hoặc thuê người khác làm giúp một việc.',
+    examples: [['I had my car repaired yesterday.', 'Hôm qua tôi đã đem xe đi sửa.'], ['She gets her hair cut every month.', 'Tháng nào cô ấy cũng đi cắt tóc.']] },
+  { id: 'reported', group: 'Bị động & câu gián tiếp', level: 'B1', skill: 'structure', title: 'Câu gián tiếp',
+    formula: ['S + said (that) + mệnh đề lùi một thì'],
+    use: 'Thuật lại lời người khác: thường lùi một thì, đổi đại từ và trạng từ chỉ thời gian.',
+    examples: [['She said (that) she was tired.', 'Cô ấy nói cô ấy mệt.'], ['He told me that he would call me later.', 'Anh ấy bảo anh ấy sẽ gọi cho tôi sau.']] },
+
+  // ===== So sánh và mức độ =====
+  { id: 'comparative', group: 'So sánh & mức độ', level: 'A2', skill: 'structure', title: 'So sánh hơn',
+    formula: ['S + be + adj-er + than', 'S + be + more + adj + than'],
+    use: 'Tính từ ngắn thêm -er, tính từ dài dùng more.',
+    examples: [['This bag is cheaper than that one.', 'Cái túi này rẻ hơn cái kia.'], ['She is more careful than her brother.', 'Cô ấy cẩn thận hơn anh trai.']] },
+  { id: 'superlative', group: 'So sánh & mức độ', level: 'A2', skill: 'structure', title: 'So sánh nhất',
+    formula: ['S + be + the + adj-est', 'S + be + the most + adj'],
+    use: 'So sánh một người hoặc vật với cả nhóm.',
+    examples: [['He is the tallest student in the class.', 'Cậu ấy là học sinh cao nhất lớp.'], ['This is the most interesting book I have read.', 'Đây là cuốn sách thú vị nhất tôi từng đọc.']] },
+  { id: 'as_as', group: 'So sánh & mức độ', level: 'A2', skill: 'structure', title: 'So sánh bằng',
+    formula: ['S + be + as + adj + as', 'S + be + not as/so + adj + as'],
+    use: 'Hai đối tượng ngang nhau hoặc không ngang nhau về một đặc điểm.',
+    examples: [['He runs as fast as his brother.', 'Anh ấy chạy nhanh như anh trai.'], ['This test was not as difficult as I expected.', 'Bài kiểm tra này không khó như tôi nghĩ.']] },
+  { id: 'too_enough', group: 'So sánh & mức độ', level: 'B1', skill: 'structure', title: 'too và enough',
+    formula: ['too + adj + (for O) + to V', 'adj + enough + (for O) + to V'],
+    use: 'too: quá … đến mức không thể. enough: đủ … để.',
+    examples: [["It's too hot to go outside.", 'Trời nóng quá nên không ra ngoài được.'], ['She is old enough to drive.', 'Cô ấy đủ tuổi để lái xe.']] },
+  { id: 'so_such', group: 'So sánh & mức độ', level: 'B1', skill: 'structure', title: 'so … that và such … that',
+    formula: ['so + adj/adv + that + mệnh đề', 'such + (a/an) + adj + N + that + mệnh đề'],
+    use: 'Nhấn mạnh mức độ dẫn đến một kết quả.',
+    examples: [['It was so cold that we stayed inside.', 'Trời lạnh đến nỗi chúng tôi ở trong nhà.'], ['It was such a good film that I watched it twice.', 'Bộ phim hay đến mức tôi xem hai lần.']] },
+  { id: 'double_comparative', group: 'So sánh & mức độ', level: 'B2', skill: 'structure', title: 'The more … the more …',
+    formula: ['The + so sánh hơn + S + V, the + so sánh hơn + S + V'],
+    use: 'Hai sự việc thay đổi song song với nhau.',
+    examples: [['The more you practice, the better you become.', 'Bạn càng luyện tập nhiều, bạn càng giỏi.'], ['The earlier we leave, the sooner we arrive.', 'Chúng ta đi càng sớm thì đến càng sớm.']] },
+
+  // ===== Mệnh đề và dạng động từ =====
+  { id: 'there_is', group: 'Mệnh đề & dạng động từ', level: 'A1', skill: 'structure', title: 'There is / There are',
+    formula: ['There is + N số ít / không đếm được', 'There are + N số nhiều'],
+    use: 'Giới thiệu sự tồn tại của người hoặc vật ở một nơi.',
+    examples: [['There is a book on the table.', 'Có một cuốn sách trên bàn.'], ['There are two cats in the garden.', 'Có hai con mèo trong vườn.']] },
+  { id: 'modals', group: 'Mệnh đề & dạng động từ', level: 'A2', skill: 'structure', title: 'Động từ khuyết thiếu',
+    formula: ['can / could / should / must / might + V'],
+    use: 'Khả năng, lời khuyên, sự bắt buộc, phỏng đoán.',
+    examples: [['You should see a doctor.', 'Bạn nên đi khám bác sĩ.'], ['He might be late because of the traffic.', 'Có thể anh ấy sẽ đến muộn vì kẹt xe.']] },
+  { id: 'used_to', group: 'Mệnh đề & dạng động từ', level: 'A2', skill: 'structure', title: 'used to và be used to',
+    formula: ['S + used to + V', 'S + be used to + V-ing'],
+    use: 'used to: thói quen trong quá khứ nay không còn. be used to: đã quen với điều gì.',
+    examples: [['I used to play football every day.', 'Trước đây ngày nào tôi cũng chơi bóng đá.'], ['He is used to getting up early.', 'Anh ấy đã quen dậy sớm.']] },
+  { id: 'it_takes', group: 'Mệnh đề & dạng động từ', level: 'A2', skill: 'structure', title: 'It takes … to …',
+    formula: ['It takes + (O) + thời gian + to V'],
+    use: 'Nói về khoảng thời gian cần để làm một việc.',
+    examples: [['It takes me 30 minutes to get to work.', 'Tôi mất 30 phút để đến chỗ làm.'], ['How long does it take to learn French?', 'Học tiếng Pháp mất bao lâu?']] },
+  { id: 'relative', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'Mệnh đề quan hệ',
+    formula: ['N + who/which/that/whose/where + mệnh đề'],
+    use: 'who cho người, which cho vật, that cho cả hai, whose chỉ sở hữu, where chỉ nơi chốn.',
+    examples: [['The man who lives next door is a doctor.', 'Người đàn ông sống bên cạnh là bác sĩ.'], ['This is the book that I told you about.', 'Đây là cuốn sách tôi đã nói với bạn.']] },
+  { id: 'gerund_inf', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'V-ing hay to V',
+    formula: ['enjoy / avoid / finish + V-ing', 'want / decide / hope + to V'],
+    use: 'Mỗi động từ đi kèm một dạng nhất định, cần học theo từng động từ.',
+    examples: [['I enjoy reading before bed.', 'Tôi thích đọc sách trước khi ngủ.'], ['She decided to move to Hanoi.', 'Cô ấy quyết định chuyển ra Hà Nội.']] },
+  { id: 'question_tags', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'Câu hỏi đuôi',
+    formula: ['Mệnh đề khẳng định, trợ động từ phủ định + S?', 'Mệnh đề phủ định, trợ động từ khẳng định + S?'],
+    use: 'Xác nhận lại thông tin hoặc mong người nghe đồng ý.',
+    examples: [["You like coffee, don't you?", 'Bạn thích cà phê, đúng không?'], ["She isn't coming, is she?", 'Cô ấy không đến, phải không?']] },
+  { id: 'would_rather', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'would rather và had better',
+    formula: ['S + would rather + V', 'S + had better + V'],
+    use: 'would rather: thích làm gì hơn. had better: nên làm (nếu không sẽ có hậu quả).',
+    examples: [["I'd rather stay at home tonight.", 'Tối nay tôi thích ở nhà hơn.'], ['You had better leave now, or you will be late.', 'Bạn nên đi ngay, không thì sẽ muộn.']] },
+  { id: 'although_despite', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'although và despite',
+    formula: ['Although + mệnh đề', 'Despite / In spite of + N / V-ing'],
+    use: 'Diễn tả sự tương phản giữa hai ý.',
+    examples: [['Although it was raining, we went out.', 'Mặc dù trời mưa, chúng tôi vẫn ra ngoài.'], ['Despite the rain, we went out.', 'Bất chấp cơn mưa, chúng tôi vẫn ra ngoài.']] },
+  { id: 'purpose', group: 'Mệnh đề & dạng động từ', level: 'B1', skill: 'structure', title: 'Chỉ mục đích',
+    formula: ['to V', 'in order to V', 'so that + mệnh đề'],
+    use: 'Nói lý do hoặc mục đích của một hành động.',
+    examples: [['He left early in order to catch the bus.', 'Anh ấy đi sớm để kịp xe buýt.'], ['I study hard so that I can pass the exam.', 'Tôi học chăm để có thể đậu kỳ thi.']] },
+  { id: 'correlative', group: 'Mệnh đề & dạng động từ', level: 'B2', skill: 'structure', title: 'Cặp liên từ',
+    formula: ['both … and …', 'either … or …', 'neither … nor …', 'not only … but also …'],
+    use: 'Nối hai thành phần cùng loại. Với neither … nor …, động từ chia theo chủ ngữ gần nhất.',
+    examples: [['She speaks both English and French.', 'Cô ấy nói được cả tiếng Anh và tiếng Pháp.'], ['Neither my brother nor I like spicy food.', 'Cả anh tôi lẫn tôi đều không thích đồ cay.']] },
+  { id: 'inversion', group: 'Mệnh đề & dạng động từ', level: 'C1', skill: 'structure', title: 'Đảo ngữ với trạng từ phủ định',
+    formula: ['Never / Hardly / Not only + trợ động từ + S + V'],
+    use: 'Nhấn mạnh ý, văn phong trang trọng.',
+    examples: [['Never have I seen such a beautiful place.', 'Tôi chưa bao giờ thấy một nơi đẹp như vậy.'], ['Not only did he lose his job, but he also lost his house.', 'Anh ấy không chỉ mất việc mà còn mất cả nhà.']] }
+]
+
+const STRUCT_GROUPS = [...new Set(STRUCTURES.map((s) => s.group))]
+
+const structStyles = {
+  detail: { flex: 1, minWidth: 0, height: '100vh', overflowY: 'auto', padding: '28px 28px 48px', boxSizing: 'border-box', textAlign: 'left' },
+  inner: { maxWidth: '720px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' },
+  label: { fontSize: fs(12), fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' },
+  formula: {
+    padding: '14px 16px',
+    borderRadius: '14px',
+    background: 'var(--surface)',
+    border: '1.5px solid var(--border-soft)',
+    fontFamily: "Consolas, 'Courier New', monospace",
+    fontSize: fs(15),
+    lineHeight: 1.9,
+    color: 'var(--accent-text)'
+  },
+  example: {
+    padding: '10px 14px',
+    borderRadius: '12px',
+    background: 'var(--surface)',
+    border: '1px solid var(--border-soft)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px'
+  },
+  practice: {
+    padding: '16px 18px',
+    borderRadius: '16px',
+    background: 'var(--accent-soft)',
+    border: '1.5px solid var(--border-soft)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px'
+  }
+}
+
+function StructureScreen({ profileId, profile, cefrLevel, onExit }) {
+  const [selectedId, setSelectedId] = useState(STRUCTURES[0].id)
+  const [search, setSearch] = useState('')
+  const [mode, setMode] = useState('library') // library | quiz
+  const [quiz, setQuiz] = useState(null)
+  const [count, setCount] = useState(5)
+  const isEnglish = /anh|english/i.test(profile.targetLanguage || '')
+  const speakLang = toSpeechLang(profile.targetLanguage)
+
+  const q = search.trim().toLowerCase()
+  const matches = (s) => !q || [s.title, s.use, ...s.formula, ...s.examples.flat()].join(' ').toLowerCase().includes(q)
+  const groups = STRUCT_GROUPS.map((g) => ({ group: g, items: STRUCTURES.filter((s) => s.group === g && matches(s)) })).filter((g) => g.items.length > 0)
+  const selected = STRUCTURES.find((s) => s.id === selectedId) || STRUCTURES[0]
+
+  const startPractice = (list, label) => {
+    setQuiz({
+      label,
+      structures: list.map((s) => ({ title: s.title, formula: s.formula.join(' / '), skill: s.skill })),
+      count
+    })
+    setMode('quiz')
+  }
+
+  if (mode === 'quiz' && quiz) {
+    return (
+      <QuizScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={cefrLevel}
+        topic={{ type: 'random' }}
+        label={quiz.label}
+        count={quiz.count}
+        loader={() =>
+          window.api.generateStructureQuiz({
+            profileId,
+            targetLanguage: profile.targetLanguage,
+            nativeLanguage: profile.nativeLanguage,
+            cefrLevel,
+            structures: quiz.structures,
+            count: quiz.count
+          })
+        }
+        onExit={() => setMode('library')}
+      />
+    )
+  }
+
+  const sameGroup = STRUCTURES.filter((s) => s.group === selected.group)
+
+  return (
+    <div style={exStyles.root}>
+      <style>{explorerCss}</style>
+      <style>{quizCss}</style>
+
+      <aside style={{ ...exStyles.side, width: '290px' }}>
+        <button className="qghost" style={{ ...quizStyles.ghost, alignSelf: 'flex-start', padding: '6px 10px' }} onClick={onExit}>
+          <Icon name="back" size={16} /> Thoát
+        </button>
+        <div style={{ fontSize: fs(18), fontWeight: '700', color: 'var(--text-strong)', padding: '4px 10px 8px' }}>Cấu trúc câu</div>
+        <div style={{ ...exStyles.searchBox, margin: '0 4px 6px' }}>
+          <Icon name="search" size={14} />
+          <input style={{ ...exStyles.searchInput, width: '100%' }} placeholder="Tìm cấu trúc..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          {groups.length === 0 && (
+            <div style={{ fontSize: fs(12), color: 'var(--text-muted)', padding: '8px 10px' }}>Không tìm thấy cấu trúc nào khớp.</div>
+          )}
+          {groups.map((g) => (
+            <div key={g.group}>
+              <div style={exStyles.sectionLabel}>{g.group}</div>
+              {g.items.map((s) => (
+                <div
+                  key={s.id}
+                  className="vf-row"
+                  role="button"
+                  style={{ ...exStyles.row, ...(s.id === selected.id ? exStyles.rowActive : {}) }}
+                  onClick={() => setSelectedId(s.id)}
+                >
+                  <span style={exStyles.rowName}>{s.title}</span>
+                  <span style={exStyles.count}>{s.level}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <main style={structStyles.detail}>
+        <div style={structStyles.inner}>
+          <div>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+              <span style={quizStyles.tag}>{selected.group}</span>
+              <span style={{ ...quizStyles.tag, background: 'var(--surface-soft)', color: 'var(--text-soft)' }}>{selected.level}</span>
+            </div>
+            <h2 style={{ ...styles.question, textAlign: 'left', fontSize: fs(28) }}>{selected.title}</h2>
+          </div>
+
+          <div>
+            <div style={structStyles.label}>Công thức</div>
+            <div style={structStyles.formula}>
+              {selected.formula.map((f, i) => (
+                <div key={i}>{f}</div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div style={structStyles.label}>Cách dùng</div>
+            <div style={{ fontSize: fs(15), lineHeight: 1.7, color: 'var(--text)' }}>{selected.use}</div>
+          </div>
+
+          <div>
+            <div style={structStyles.label}>Ví dụ</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {selected.examples.map(([en, vi], i) => (
+                <div key={i} style={structStyles.example}>
+                  <button style={vocabStyles.cardSpeak} onClick={() => speakText(en, speakLang)} title="Nghe đọc">
+                    <Icon name="speaker" size={14} />
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: fs(15), fontWeight: '600', color: 'var(--text-strong)' }}>{en}</div>
+                    <div style={{ fontSize: fs(13), color: 'var(--text-muted)', marginTop: '2px' }}>{vi}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={structStyles.practice}>
+            <div>
+              <div style={{ fontSize: fs(15), fontWeight: '700', color: 'var(--text-strong)' }}>Luyện tập với AI</div>
+              <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginTop: '3px', lineHeight: 1.5 }}>
+                AI tạo câu hỏi trắc nghiệm về cấu trúc này theo trình độ {cefrLevel} và lĩnh vực của bạn, không lặp lại các câu đã làm.
+              </div>
+            </div>
+            {!isEnglish && (
+              <div style={{ fontSize: fs(12), color: '#c0392b' }}>Thư viện cấu trúc hiện viết cho tiếng Anh nên chưa thể luyện tập với ngôn ngữ bạn đang học.</div>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <SegmentedControl
+                value={count}
+                onChange={setCount}
+                options={[
+                  { value: 5, label: '5 câu' },
+                  { value: 10, label: '10 câu' }
+                ]}
+              />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  className="qghost"
+                  style={{ ...quizStyles.ghost, border: '1.5px solid var(--border)' }}
+                  disabled={!isEnglish}
+                  onClick={() => startPractice(shuffleArr(sameGroup).slice(0, 5), `Nhóm: ${selected.group}`)}
+                >
+                  Luyện cả nhóm
+                </button>
+                <button
+                  className="qprimary"
+                  style={{ ...quizStyles.primary, ...(!isEnglish ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+                  disabled={!isEnglish}
+                  onClick={() => startPractice([selected], `Cấu trúc: ${selected.title}`)}
+                >
+                  <Icon name="sparkle" size={15} /> Luyện cấu trúc này
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
   )
 }
 
@@ -4529,6 +4882,7 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
   const [showReview, setShowReview] = useState(false)
   const [showPractice, setShowPractice] = useState(false)
   const [showVocab, setShowVocab] = useState(false)
+  const [showStructures, setShowStructures] = useState(false)
   const [showProgress, setShowProgress] = useState(false)
   const [rightTab, setRightTab] = useState('today') 
   const [username, setUsername] = useState('')
@@ -4882,6 +5236,7 @@ const handleLogout = () => {
   setPlacementError('')
   setShowNotes(false)
   setShowProgress(false)
+  setShowStructures(false)
   window.api.getProfiles().then((res) => setExistingProfiles(res.profiles || []))
 }
 const categoryCounts = Object.entries(
@@ -5208,6 +5563,17 @@ if (showVocab) {
   )
 }
 
+  if (showStructures) {
+    return (
+      <StructureScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={placementResult?.level || 'A1'}
+        onExit={() => setShowStructures(false)}
+      />
+    )
+  }
+
   if (showProgress) {
     return (
       <ProgressScreen
@@ -5384,6 +5750,9 @@ return (
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => setShowVocab(true)}>
           <Icon name="cards" size={17} /> Từ vựng
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={() => setShowStructures(true)}>
+          <Icon name="layers" size={17} /> Cấu trúc câu
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => setShowProgress(true)}>
           <Icon name="trend" size={17} /> Tiến bộ
@@ -5659,22 +6028,26 @@ return (
 )
 }
 
+function renderInline(str, prefix) {
+  return str.split(/(\*\*.*?\*\*)/g).map((p, i) =>
+    p.startsWith('**') && p.endsWith('**') && p.length > 4 ? <strong key={`${prefix}-${i}`}>{p.slice(2, -2)}</strong> : p
+  )
+}
+
 function formatMessage(text) {
   const lines = text.split('\n')
   return lines.map((line, i) => {
     if (!line.trim()) return <div key={i} style={{ height: '8px' }} />
-    const parts = line.split(/(\*\*.*?\*\*|\([^()]*\))/g)
+    const parts = line.split(/(\([^()]*\))/g)
     return (
       <div key={i} style={{ marginBottom: '4px' }}>
-        {parts.map((part, j) => {
-          if (part.startsWith('**') && part.endsWith('**')) {
-            return <strong key={j}>{part.slice(2, -2)}</strong>
-          }
-          if (part.startsWith('(') && part.endsWith(')')) {
-            return <span key={j} style={{ opacity: 0.7, fontSize: '0.92em' }}>{part}</span>
-          }
-          return part
-        })}
+        {parts.map((part, j) =>
+          part.startsWith('(') && part.endsWith(')') ? (
+            <span key={j} style={{ opacity: 0.7, fontSize: '0.92em' }}>{renderInline(part, j)}</span>
+          ) : (
+            <span key={j}>{renderInline(part, j)}</span>
+          )
+        )}
       </div>
     )
   })
