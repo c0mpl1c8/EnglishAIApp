@@ -6,6 +6,13 @@ const api = {
   assessPlacement: (data) => ipcRenderer.invoke('assess-placement', data),
   saveProfile: (data) => ipcRenderer.invoke('save-profile', data),
   sendChatMessage: (data) => ipcRenderer.invoke('send-chat-message', data),
+  transcribeSpeechLocal: (data) => ipcRenderer.invoke('transcribe-speech-local', data),
+  synthesizeSpeechLocal: (data) => ipcRenderer.invoke('synthesize-speech-local', data),
+  onLocalSpeechProgress: (callback) => {
+    const listener = (_event, progress) => callback(progress)
+    ipcRenderer.on('local-speech-progress', listener)
+    return () => ipcRenderer.removeListener('local-speech-progress', listener)
+  },
   getMistakes: (data) => ipcRenderer.invoke('get-mistakes', data),
   getProfiles: () => ipcRenderer.invoke('get-profiles'),
   getChatHistory: (data) => ipcRenderer.invoke('get-chat-history', data),
@@ -25,6 +32,7 @@ const api = {
   saveLearnerNotes: (data) => ipcRenderer.invoke('save-learner-notes', data),
   refreshLearnerNotes: (data) => ipcRenderer.invoke('refresh-learner-notes', data),
   generateQuiz: (data) => ipcRenderer.invoke('generate-quiz', data),
+  generateAssessmentQuiz: (data) => ipcRenderer.invoke('generate-assessment-quiz', data),
   generateStructureQuiz: (data) => ipcRenderer.invoke('generate-structure-quiz', data),
   getProgress: (data) => ipcRenderer.invoke('get-progress', data),
   getProgressInsight: (data) => ipcRenderer.invoke('get-progress-insight', data),

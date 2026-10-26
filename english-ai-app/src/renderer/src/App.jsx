@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { createAudioSpeechCapture, decodeSpeechAudio, playSpeechAudio, speakText as speakSpeechText, speechErrorMessage, stopSpeechAudio } from './voice/speech.mjs'
 
 const fs = (px) => `calc(${px}px * var(--fs))`
 
@@ -28,41 +29,48 @@ const themes = {
     '--warn-bg': '#fff8e1',
     '--warn-border': '#ffe082',
     '--warn-text': '#5c4400',
+    '--danger': '#c0392b',
     '--shadow': '0 8px 30px rgba(0, 0, 0, 0.08)'
   },
   dark: {
-    '--bg': 'radial-gradient(circle at 30% 30%, #2e1f5e 0%, #12111a 55%, #0b0b10 100%)',
-    '--surface': '#1c1b26',
-    '--surface-soft': '#22212e',
-    '--panel': 'rgba(28,27,38,0.7)',
-    '--text': '#ececf1',
+    '--bg': '#080809',
+    '--surface': '#111113',
+    '--surface-soft': '#1b1b1e',
+    '--panel': '#0b0b0c',
+    '--text': '#f0f0f2',
     '--text-strong': '#ffffff',
-    '--text-soft': '#b8b8c4',
-    '--text-muted': '#9a9aab',
-    '--border': '#3a3948',
-    '--border-soft': '#2c2b3a',
-    '--btn-border': '#ececf1',
-    '--btn-text': '#ececf1',
-    '--bubble-user-bg': '#6366f1',
-    '--bubble-user-text': '#ffffff',
-    '--bubble-ai-bg': '#2a2937',
-    '--accent': '#818cf8',
-    '--accent-soft': '#26254a',
-    '--accent-text': '#a5b4fc',
-    '--dot-off': '#3a3948',
-    '--warn-bg': '#3a3115',
-    '--warn-border': '#6b5a1e',
-    '--warn-text': '#f5e6b0',
-    '--shadow': '0 8px 30px rgba(0, 0, 0, 0.5)'
+    '--text-soft': '#dedee3',
+    '--text-muted': '#b5b5be',
+    '--border': '#3e3e44',
+    '--border-soft': '#2a2a2f',
+    '--btn-border': '#66666f',
+    '--btn-text': '#151517',
+    '--bubble-user-bg': '#e4e4e7',
+    '--bubble-user-text': '#151517',
+    '--bubble-ai-bg': '#1b1b1e',
+    '--accent': '#e4e4e7',
+    '--accent-soft': '#29292e',
+    '--accent-text': '#ffffff',
+    '--dot-off': '#39393f',
+    '--warn-bg': '#211c12',
+    '--warn-border': '#514323',
+    '--warn-text': '#eadba9',
+    '--danger': '#ff7777',
+    '--shadow': '0 16px 44px rgba(0, 0, 0, 0.3)'
   }
 }
 
-const defaultSettings = { theme: 'light', fontSize: 'medium', showInlineMistakes: true }
+const defaultSettings = { theme: 'light', fontSize: 'medium', showInlineMistakes: true, speechVoice: 'af_heart' }
+const speechVoiceReplacements = { af_nova: 'af_nicole', am_fenrir: 'am_puck' }
+const speechVoices = new Set(['af_heart', 'af_bella', 'af_nicole', 'am_puck', 'am_michael', 'bf_emma', 'bm_george'])
 
 function loadSettings() {
   try {
     const saved = localStorage.getItem('appSettings')
-    return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings
+    if (!saved) return defaultSettings
+    const settings = { ...defaultSettings, ...JSON.parse(saved) }
+    const speechVoice = speechVoiceReplacements[settings.speechVoice] || settings.speechVoice
+    return { ...settings, speechVoice: speechVoices.has(speechVoice) ? speechVoice : defaultSettings.speechVoice }
   } catch {
     return defaultSettings
   }
@@ -215,7 +223,7 @@ const scrollbarStyle = `
   }
 `
 const buttonCss = `
-  button:disabled:not(.quiz-opt) { opacity: 0.5; cursor: not-allowed; }
+  button:disabled:not(.quiz-opt) { opacity: 1; cursor: not-allowed; }
 `
 const loginCss = `
   .account-row { transition: background 120ms ease; }
@@ -244,16 +252,77 @@ function toSpeechLang(name) {
   return 'en-US'
 }
 
-function cleanForSpeech(text) {
-  return text.replace(/\*\*/g, '').replace(/\([^()]*\)/g, '').replace(/\s+/g, ' ').trim()
+function speakText(text, lang, onEnd, voice = 'af_heart') {
+  return speakNaturalText(text, lang, onEnd, voice)
 }
 
-function speakText(text, lang) {
-  if (!window.speechSynthesis) return
-  window.speechSynthesis.cancel()
-  const utter = new SpeechSynthesisUtterance(cleanForSpeech(text))
-  utter.lang = lang
-  window.speechSynthesis.speak(utter)
+let naturalSpeechRequest = 0
+function cancelNaturalSpeech() {
+  naturalSpeechRequest += 1
+  stopSpeechAudio(window)
+}
+
+async function speakNaturalText(text, lang, onEnd, voice = 'af_heart', onFallback) {
+  const requestId = ++naturalSpeechRequest
+  stopSpeechAudio(window)
+  if (/^en(?:-|$)/i.test(lang)) {
+    if (window.api?.synthesizeSpeechLocal) {
+      try {
+        const result = await window.api.synthesizeSpeechLocal({ text, voice })
+        if (requestId !== naturalSpeechRequest) return false
+        if (result?.success && result.audio?.length) {
+          return playSpeechAudio({ environment: window, audio: result.audio, sampleRate: result.sampleRate, onEnd })
+        }
+        const error = result?.error || 'LOCAL_TTS_FAILED'
+        console.warn('Local AI speech synthesis failed; using the device voice.', error)
+        onFallback?.()
+      } catch (error) {
+        console.warn('Local AI speech synthesis failed; using the device voice.', error)
+        onFallback?.()
+      }
+    } else {
+      console.warn('Local AI speech synthesis is unavailable; using the device voice.')
+      onFallback?.()
+    }
+  }
+  if (requestId !== naturalSpeechRequest) return false
+  return speakSpeechText({ environment: window, text, lang, onEnd })
+}
+
+async function previewKokoroVoice(text, voice, onEnd) {
+  const requestId = ++naturalSpeechRequest
+  stopSpeechAudio(window)
+  if (!window.api?.synthesizeSpeechLocal) {
+    return { success: false, error: 'LOCAL_TTS_UNAVAILABLE' }
+  }
+
+  try {
+    const result = await window.api.synthesizeSpeechLocal({ text, voice })
+    if (requestId !== naturalSpeechRequest) return { success: false, cancelled: true }
+    if (!result?.success || !result.audio?.length) {
+      return { success: false, error: result?.error || 'LOCAL_TTS_FAILED' }
+    }
+    const started = playSpeechAudio({
+      environment: window,
+      audio: result.audio,
+      sampleRate: result.sampleRate,
+      onEnd
+    })
+    return started ? { success: true } : { success: false, error: 'AUDIO_PLAYBACK_FAILED' }
+  } catch (error) {
+    console.error('Kokoro voice preview failed.', error)
+    return { success: false, error: 'LOCAL_TTS_FAILED' }
+  }
+}
+
+function getVoiceSpeechText(text, nativeLanguage) {
+  const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const isVietnameseNative = /việt|viet/i.test(nativeLanguage || '')
+  if (!isVietnameseNative) return lines.join(' ')
+
+  const vietnameseText = /[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/iu
+  const commonVietnamese = /\b(bạn|mình|chào|tiếng|được|không|rất|vui|tên|là|gì|có|phải|xin|nhé|nha|một|và|của|này|đó)\b/iu
+  return lines.filter((line) => !vietnameseText.test(line) && !commonVietnamese.test(line)).join(' ')
 }
 
 const topicOptions = [
@@ -263,6 +332,57 @@ const topicOptions = [
   { id: 'phỏng vấn xin việc', label: '💼 Phỏng vấn xin việc' },
   { id: 'trò chuyện xã giao hàng ngày', label: '💬 Giao tiếp hàng ngày' },
   { id: 'mua sắm ở cửa hàng', label: '🛍️ Mua sắm' }
+]
+
+const voiceRoleplayScenarios = [
+  {
+    id: 'directions',
+    title: 'Hỏi đường',
+    icon: '🧭',
+    description: 'Hỏi người địa phương cách đến một địa điểm.',
+    prompt: 'You are a visitor who has just arrived at a train station. The learner is a local resident helping you. Ask the learner for directions to the city center. The learner should explain the route and you should ask brief natural follow-up questions as a traveler. Do not act as the local giving directions.',
+    openingLine: 'Hi, I just got off the train. Could you tell me how to get to the city center?'
+  },
+  {
+    id: 'cafe',
+    title: 'Ở quán cà phê',
+    icon: '☕',
+    description: 'Gọi đồ uống và trao đổi với nhân viên.',
+    prompt: 'You are a friendly barista at a cafe. The learner is a customer. Keep the ordering conversation natural and ask only one question at a time.',
+    openingLine: 'Hi there! What can I get for you today?'
+  },
+  {
+    id: 'restaurant',
+    title: 'Nhà hàng',
+    icon: '🍽️',
+    description: 'Đặt bàn, gọi món và hỏi về món ăn.',
+    prompt: 'You are a friendly restaurant server. The learner is a guest. Continue naturally through seating and ordering, one short question at a time.',
+    openingLine: 'Good evening! Do you have a reservation?'
+  },
+  {
+    id: 'shopping',
+    title: 'Mua sắm',
+    icon: '🛍️',
+    description: 'Hỏi giá, kích cỡ và thanh toán.',
+    prompt: 'You are a helpful shop assistant. The learner is a customer looking for an item. Help them compare options, sizes, and prices through a natural short conversation.',
+    openingLine: 'Hello! Are you looking for anything in particular?'
+  },
+  {
+    id: 'hotel',
+    title: 'Nhận phòng khách sạn',
+    icon: '🛎️',
+    description: 'Làm thủ tục nhận phòng và hỏi thông tin.',
+    prompt: 'You are a hotel receptionist. The learner is a guest checking in. Continue with a realistic check-in conversation, one short question at a time.',
+    openingLine: 'Welcome to the hotel! Do you have a reservation?'
+  },
+  {
+    id: 'new-friend',
+    title: 'Làm quen',
+    icon: '👋',
+    description: 'Bắt chuyện và tìm hiểu về một người mới.',
+    prompt: 'You have just met the learner at a casual social event. Have a natural getting-to-know-you conversation without turning it into a lesson.',
+    openingLine: "Hi, I'm Alex. Is this your first time here?"
+  }
 ]
 
 const DAILY_GOAL = 5
@@ -537,7 +657,7 @@ const notesStyles = {
     borderRadius: '999px',
     border: 'none',
     background: 'var(--accent)',
-    color: '#ffffff',
+    color: 'var(--btn-text)',
     fontSize: fs(14),
     fontWeight: '600',
     cursor: 'pointer'
@@ -627,7 +747,7 @@ const quizStyles = {
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
-    color: '#ffffff'
+    color: 'var(--btn-text)'
   },
   radioOn: { background: 'var(--accent)', border: '1.5px solid var(--accent)' },
   chip: {
@@ -639,13 +759,13 @@ const quizStyles = {
     fontSize: fs(13),
     cursor: 'pointer'
   },
- chipOn: { background: 'var(--accent)', border: '1.5px solid var(--accent)', color: '#ffffff' },
+ chipOn: { background: 'var(--accent)', border: '1.5px solid var(--accent)', color: 'var(--btn-text)' },
   primary: {
     padding: '11px 26px',
     borderRadius: '999px',
     border: 'none',
     background: 'var(--accent)',
-    color: '#ffffff',
+    color: 'var(--btn-text)',
     fontSize: fs(15),
     fontWeight: '600',
     cursor: 'pointer',
@@ -877,35 +997,60 @@ function TypingIndicator() {
   )
 }
 
-function useSpeechInput(lang, onResult) {
+function useSpeechInput(onResult, onSpeechDetected) {
   const [listening, setListening] = useState(false)
-  const recRef = useRef(null)
-  const supported = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)
+  const [error, setError] = useState('')
+  const [transcribing, setTranscribing] = useState(false)
+  const [modelProgress, setModelProgress] = useState(null)
+  const captureRef = useRef(null)
+  const onResultRef = useRef(onResult)
+  const onSpeechDetectedRef = useRef(onSpeechDetected)
+  const supported = typeof window !== 'undefined' && Boolean(
+    window.navigator?.mediaDevices?.getUserMedia && window.MediaRecorder &&
+    (window.AudioContext || window.webkitAudioContext)
+  )
 
-  const start = () => {
-    if (!supported) return
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    const rec = new SR()
-    rec.lang = lang
-    rec.interimResults = false
-    rec.maxAlternatives = 1
-    rec.onresult = (e) => onResult(e.results[0][0].transcript)
-    rec.onend = () => setListening(false)
-    rec.onerror = () => setListening(false)
-    recRef.current = rec
-    rec.start()
-    setListening(true)
-  }
+  useEffect(() => {
+    onResultRef.current = onResult
+  }, [onResult])
 
-  const stop = () => {
-    recRef.current?.stop()
-    setListening(false)
-  }
+  useEffect(() => {
+    onSpeechDetectedRef.current = onSpeechDetected
+  }, [onSpeechDetected])
 
-  return { supported, listening, start, stop }
+  useEffect(() => window.api?.onLocalSpeechProgress?.(setModelProgress), [])
+
+  const start = useCallback(() => {
+    if (!supported) return false
+    setError('')
+    setTranscribing(false)
+    setModelProgress(null)
+    onSpeechDetectedRef.current?.(false)
+    const capture = createAudioSpeechCapture({
+      environment: window,
+      shouldTranscribeInterim: () => false,
+      onTranscript: (transcript) => onResultRef.current?.(transcript),
+      onSpeechDetected: (detected) => onSpeechDetectedRef.current?.(detected),
+      onTranscribing: setTranscribing,
+      onStateChange: setListening,
+      onError: setError,
+      transcribe: async ({ blob }) => {
+        const { audio, sampleRate } = await decodeSpeechAudio(blob, { environment: window })
+        const result = await window.api.transcribeSpeechLocal({ audio, sampleRate })
+        if (!result.success) throw new Error(result.error)
+        return result.transcript
+      }
+    })
+    captureRef.current = capture
+    return capture.start()
+  }, [supported])
+
+  const stop = useCallback(() => {
+    captureRef.current?.stop()
+  }, [])
+
+  return { supported, listening, error, transcribing, modelProgress, start, stop }
 }
-
-
 
 function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
   const [queue, setQueue] = useState([])
@@ -1065,7 +1210,7 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
         />
       )}
 
-      {notice && <p style={{ margin: 0, color: '#c0392b', fontSize: fs(14) }}>{notice}</p>}
+      {notice && <p style={{ margin: 0, color: 'var(--danger)', fontSize: fs(14) }}>{notice}</p>}
 
       {phase === 'feedback' && result && (
         <div style={{ ...practiceStyles.feedback, ...(result.correct ? practiceStyles.ok : practiceStyles.bad) }}>
@@ -1250,7 +1395,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   )
 }
 
- function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, loader, onExit }) {
+ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, loader, attemptMode = 'quiz', previousAssessment, onPracticeWeakness, onExit }) {
   // loading | question | answered | done | error
   const [phase, setPhase] = useState('loading')
   const [questions, setQuestions] = useState([])
@@ -1304,38 +1449,60 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
     if (phase !== 'question') return
     const q = questions[index]
     const ok = i === q.answer
+    const focus = q.focus || q.structure || (
+      ['preset', 'custom'].includes(topic?.type) ? topic.value : q.skillLabel || q.skill
+    )
     window.api.recordSkillEvent({
       profileId,
       skill: q.skill,
       correct: ok,
-      source: preset ? 'retry' : 'quiz',
-      question: preset ? undefined : q.question
+      source: preset ? 'retry' : attemptMode === 'assessment' ? 'assessment' : 'quiz',
+      question: preset ? undefined : q.question,
+      focus
     })
     setLog((l) => [
       ...l,
-      { question: q.question, options: q.options, answer: q.answer, picked: i, explanation: q.explanation, skill: q.skill }
+      { question: q.question, options: q.options, answer: q.answer, picked: i, explanation: q.explanation, skill: q.skill, focus, difficulty: q.difficulty }
     ])
     setPicked(i)
     if (ok) setScore((s) => s + 1)
     setPhase('answered')
   }
 
-  const finish = () => {
+  const finish = async () => {
     if (!preset && !savedRef.current && log.length > 0) {
       savedRef.current = true
-      window.api.saveQuizAttempt({ profileId, mode: 'quiz', label, details: log })
+      let saved
+      try { saved = await window.api.saveQuizAttempt({ profileId, mode: attemptMode, label, details: log }) } catch { saved = null }
+      if (!saved?.success) {
+        savedRef.current = false
+        setErrMsg('Chưa lưu được kết quả. Câu trả lời vẫn còn trên màn hình; hãy thử lưu lại trước khi rời bài.')
+        setPhase('save-error')
+        return
+      }
     }
     setPhase('done')
   }
 
-  const next = () => {
+  const next = async () => {
     if (index + 1 >= questions.length) {
-      finish()
+      await finish()
       return
     }
-    setIndex(index + 1)
-    setPicked(null)
-    setPhase('question')
+    const nextIndex = index + 1
+    const previousAnswer = log[nextIndex]
+    setIndex(nextIndex)
+    setPicked(previousAnswer?.picked ?? null)
+    setPhase(previousAnswer ? 'answered' : 'question')
+  }
+
+  const goToPreviousQuestion = () => {
+    if (index <= 0) return
+    const previousIndex = index - 1
+    const previousAnswer = log[previousIndex]
+    setIndex(previousIndex)
+    setPicked(previousAnswer?.picked ?? null)
+    setPhase(previousAnswer ? 'answered' : 'question')
   }
 
   useEffect(() => {
@@ -1346,8 +1513,14 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const wrap = (children) => (
-    <div style={styles.container} className="fade-in">
+  const wrap = (children, scrollable = false) => (
+    <div
+      style={{
+        ...styles.container,
+        ...(scrollable ? { justifyContent: 'flex-start', overflowY: 'auto', paddingTop: '32px', paddingBottom: '32px' } : {})
+      }}
+      className="fade-in"
+    >
       <style>{fadeStyle}</style>
       <style>{quizCss}</style>
       {children}
@@ -1376,26 +1549,78 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
     )
   }
 
+  if (phase === 'save-error') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa lưu được kết quả</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '460px', margin: 0 }}>{errMsg}</p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Rời bài</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={finish}>Thử lưu lại</button>
+        </div>
+      </>
+    )
+  }
+
   if (phase === 'done') {
     const pct = Math.round((score / questions.length) * 100)
     const msg = pct >= 80 ? 'Rất tốt!' : pct >= 50 ? 'Khá ổn, luyện thêm một chút nhé.' : 'Chưa vững, hãy xem lại phần giải thích và thử lại.'
+    const assessmentSkillResults = attemptMode === 'assessment'
+      ? [...new Set(log.map((item) => item.skill))].map((skill) => {
+          const items = log.filter((item) => item.skill === skill)
+          const correct = items.filter((item) => item.picked === item.answer).length
+          return {
+            skill,
+            label: questions.find((q) => q.skill === skill)?.skillLabel || skill,
+            focus: [...new Set(items.filter((item) => item.picked !== item.answer).map((item) => item.focus).filter(Boolean))].join(', ') || [...new Set(items.map((item) => item.focus).filter(Boolean))].join(', '),
+            correct,
+            total: items.length,
+            status: items.length < 2 ? 'Chưa đủ câu để kết luận' : correct / items.length <= 0.5 ? 'Nên củng cố' : 'Tạm ổn, tiếp tục theo dõi',
+            needsPractice: items.length >= 2 && correct / items.length <= 0.5
+          }
+        })
+      : []
     return wrap(
       <>
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>{msg}</p>
+        {attemptMode === 'assessment' && (
+          <div style={{ ...progressStyles.card, width: '100%', maxWidth: '640px', textAlign: 'left' }}>
+            <div style={progressStyles.cardTitle}>Kết quả theo chủ điểm</div>
+            {assessmentSkillResults.map((item) => (
+              <div key={item.skill} style={progressStyles.catRow}>
+                <span style={{ flex: 1 }}>
+                  <strong>{item.label}</strong>
+                  <span style={{ display: 'block', color: 'var(--text-muted)', fontSize: fs(12) }}>{item.status}{item.focus ? ` · ${item.focus}` : ''}</span>
+                </span>
+                <strong style={{ color: item.total < 2 ? 'var(--text-muted)' : scoreColor(item.correct, item.total) }}>{item.correct}/{item.total}</strong>
+              </div>
+            ))}
+            {assessmentSkillResults.some((item) => item.needsPractice) && <button className="qprimary" style={{ ...quizStyles.primary, marginTop: '10px' }} onClick={() => {
+              const weakest = assessmentSkillResults.filter((item) => item.needsPractice).sort((a, b) => a.correct / a.total - b.correct / b.total)[0]
+              onPracticeWeakness?.(weakest.skill, weakest.focus.split(', ')[0] || weakest.label)
+            }}>Luyện chủ điểm cần củng cố</button>}
+            {previousAssessment && <p style={{ margin: '10px 0 0', color: 'var(--text-muted)', fontSize: fs(13) }}>So với lần trước: {previousAssessment.correct}/{previousAssessment.total} ({Math.round(previousAssessment.correct / previousAssessment.total * 100)}%) · {pct - Math.round(previousAssessment.correct / previousAssessment.total * 100) > 0 ? '+' : ''}{pct - Math.round(previousAssessment.correct / previousAssessment.total * 100)} điểm phần trăm</p>}
+          </div>
+        )}
+        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {log.map((d, i) => <ReviewCard key={i} d={d} n={i + 1} />)}
+        </div>
         {!preset && (
           <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: fs(12) }}>
-            Bài này đã được lưu, xem lại ở mục "Xem lại bài đã làm" trong Ôn tập.
+            Kết quả đã được lưu trong mục “Xem lại bài đã làm” ở Ôn tập.
           </p>
         )}
+        {attemptMode === 'assessment' && <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: fs(12), maxWidth: '640px' }}>Đây là thang tham khảo nội bộ của ứng dụng, chưa được chuẩn hóa hoặc chứng nhận như bài thi CEFR. Bài này đánh giá ngữ pháp, từ vựng và cấu trúc; chưa đo kỹ năng nghe/nói.</p>}
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>
             {preset ? 'Làm lại' : 'Bộ câu hỏi mới'}
           </button>
         </div>
-      </>
+      </>,
+      true
     )
   }
 
@@ -1408,13 +1633,21 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
       <p style={{ margin: 0, fontSize: fs(13), color: 'var(--text-muted)' }}>
         Câu {index + 1}/{questions.length} · {label}
       </p>
+      {attemptMode === 'assessment' && <span style={quizStyles.tag}>{DIFF_LABEL[q.difficulty] || 'Vừa'}</span>}
       {q.structure && <span style={quizStyles.tag}>{q.structure}</span>}
       <QuestionBlock q={q} picked={picked} answered={answered} onChoose={choose} />
 
       <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
-          <Icon name="back" size={16} /> Thoát
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
+            <Icon name="back" size={16} /> Thoát
+          </button>
+          {index > 0 && (
+            <button className="qghost" style={quizStyles.ghost} onClick={goToPreviousQuestion}>
+              <Icon name="back" size={16} /> Câu trước
+            </button>
+          )}
+        </div>
         {answered && (
           <button className="qprimary" style={quizStyles.primary} onClick={next}>
             {index + 1 >= questions.length ? 'Xem kết quả' : 'Câu tiếp theo'} <Icon name="next" size={16} />
@@ -1436,7 +1669,7 @@ function reshuffleQuestion(q) {
 const fmtAt = (at) => (at ? `${at.slice(8, 10)}/${at.slice(5, 7)} ${at.slice(11, 16)}` : '')
 const scoreColor = (c, t) => {
   const p = t ? c / t : 0
-  return p >= 0.8 ? '#27ae60' : p >= 0.5 ? '#e0a100' : '#c0392b'
+  return p >= 0.8 ? '#27ae60' : p >= 0.5 ? '#e0a100' : 'var(--danger)'
 }
 
 const DIFF_LABEL = { easy: 'Dễ', medium: 'Vừa', hard: 'Khó' }
@@ -1497,7 +1730,7 @@ function QuestionBlock({ q, picked, answered, onChoose }) {
   )
 }
 
-function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
+function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill, targetFocus, onExit }) {
   // loading | intro | question | answered | done | error
   const [phase, setPhase] = useState('loading')
   const [pool, setPool] = useState([])
@@ -1510,12 +1743,16 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
   const [note, setNote] = useState('')
   const [total, setTotal] = useState(count)
   const [errMsg, setErrMsg] = useState('')
+  const [saveError, setSaveError] = useState('')
   const savedRef = useRef(false)
 
-  const saveAttempt = (list) => {
-    if (savedRef.current || list.length === 0) return
+  const saveAttempt = async (list) => {
+    if (savedRef.current) return true
+    if (list.length === 0) return false
     savedRef.current = true
-    window.api.saveQuizAttempt({
+    let result
+    try {
+      result = await window.api.saveQuizAttempt({
       profileId,
       mode: 'adaptive',
       label: 'Luyện điểm yếu',
@@ -1526,9 +1763,19 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
         picked: a.picked,
         explanation: a.explanation,
         skill: a.skill,
+        focus: a.focus,
         difficulty: a.difficulty
       }))
-    })
+      })
+    } catch {
+      result = null
+    }
+    if (!result?.success) {
+      savedRef.current = false
+      setSaveError('Chưa lưu được kết quả luyện tập. Câu trả lời của bài này vẫn còn; hãy thử lưu lại.')
+      return false
+    }
+    return true
   }
   const load = async () => {
     setPhase('loading')
@@ -1538,7 +1785,9 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
       profileId,
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
-      cefrLevel
+      cefrLevel,
+      targetSkill,
+      targetFocus
     })
     if (res.success && res.questions.length >= 3) {
       setPool(res.questions)
@@ -1583,12 +1832,14 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
     if (phase !== 'question' || !current) return
     const q = current.q
     const ok = i === q.answer
-     window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'adaptive', question: q.question })
+    const focus = q.focus || q.structure || q.skillLabel || q.skill
+    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'adaptive', question: q.question, focus })
     setAsked((a) => [
       ...a,
       {
         skill: q.skill,
         skillLabel: q.skillLabel,
+        focus,
         difficulty: q.difficulty,
         correct: ok,
         question: q.question,
@@ -1612,15 +1863,21 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
     setPhase('answered')
   }
 
-  const next = () => {
+  const next = async () => {
     if (asked.length >= total) {
-      saveAttempt(asked)
+      if (!(await saveAttempt(asked))) {
+        setPhase('save-error')
+        return
+      }
       setPhase('done')
       return
     }
     const nx = pickNextQuestion(pool, used, target, askedBySkill(), current?.q.skill)
     if (!nx) {
-      saveAttempt(asked)
+      if (!(await saveAttempt(asked))) {
+        setPhase('save-error')
+        return
+      }
       setPhase('done')
       return
     }
@@ -1638,8 +1895,14 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  const wrap = (children) => (
-    <div style={styles.container} className="fade-in">
+  const wrap = (children, scrollable = false) => (
+    <div
+      style={{
+        ...styles.container,
+        ...(scrollable ? { justifyContent: 'flex-start', overflowY: 'auto', paddingTop: '32px', paddingBottom: '32px' } : {})
+      }}
+      className="fade-in"
+    >
       <style>{fadeStyle}</style>
       <style>{quizCss}</style>
       {children}
@@ -1670,12 +1933,27 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
     )
   }
 
+  if (phase === 'save-error') {
+    return wrap(
+      <>
+        <h2 style={styles.question}>Chưa lưu được kết quả luyện tập</h2>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '460px', margin: 0 }}>{saveError}</p>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Rời bài</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={async () => {
+            if (await saveAttempt(asked)) setPhase('done')
+          }}>Thử lưu lại</button>
+        </div>
+      </>
+    )
+  }
+
   if (phase === 'intro') {
     return wrap(
       <>
         <h2 style={styles.question}>Luyện điểm yếu của tôi</h2>
         <div style={practiceStyles.card}>
-          <div style={{ fontSize: fs(14), fontWeight: '700', marginBottom: '8px' }}>Vì sao AI chọn bài này?</div>
+          <div style={{ fontSize: fs(14), fontWeight: '700', marginBottom: '8px' }}>{targetFocus ? `Luyện theo kết quả đánh giá: ${targetFocus}` : 'Vì sao AI chọn bài này?'}</div>
           {plan.map((s) => (
             <div key={s.id} style={{ marginBottom: '10px' }}>
               <div style={{ fontSize: fs(14), fontWeight: '600' }}>{s.label}</div>
@@ -1719,14 +1997,18 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, onExit }) {
             </div>
           ))}
           <div style={{ fontSize: fs(12), color: 'var(--text-muted)', marginTop: '8px' }}>
-            Kết quả đã được cộng vào bản đồ kỹ năng trong mục Tiến bộ.
+            Kết quả đã được cộng vào bản đồ kỹ năng và sẽ ảnh hưởng đến các gợi ý luyện tiếp theo. Sau vài lượt luyện, hãy làm lại bài đánh giá tổng quát để so sánh.
           </div>
+        </div>
+        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {asked.map((d, i) => <ReviewCard key={i} d={d} n={i + 1} />)}
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>Bộ mới</button>
         </div>
-      </>
+      </>,
+      true
     )
   }
 
@@ -1779,7 +2061,7 @@ function ReviewCard({ d, n }) {
             </span>
           )}
         </span>
-        <strong style={{ fontSize: fs(12), color: ok ? '#27ae60' : '#c0392b' }}>
+        <strong style={{ fontSize: fs(12), color: ok ? '#27ae60' : 'var(--danger)' }}>
           {ok ? 'Đúng' : d.picked == null ? 'Chưa trả lời' : 'Sai'}
         </strong>
       </div>
@@ -1943,7 +2225,7 @@ function QuizHistory({ profileId, onBack, onRetry }) {
               <span style={hubStyles.text}>
                 <span style={hubStyles.title}>{a.label || 'Bài trắc nghiệm'}</span>
                 <span style={hubStyles.desc}>
-                  {fmtAt(a.at)} · {a.mode === 'adaptive' ? 'Luyện điểm yếu' : 'Trắc nghiệm'}
+                  {fmtAt(a.at)} · {a.mode === 'adaptive' ? 'Luyện điểm yếu' : a.mode === 'assessment' ? 'Đánh giá tổng quát' : 'Trắc nghiệm'}
                 </span>
               </span>
               <strong style={{ color: scoreColor(a.correct, a.total), fontSize: fs(16) }}>{a.correct}/{a.total}</strong>
@@ -2026,6 +2308,7 @@ function buildSpotFromItems(items) {
       const options = shuffleArr([it.wrong, it.correct, third])
       return {
         skill: it.skill || 'other',
+        focus: it.focus || it.skill || 'Nhận diện lỗi trong câu',
         explanation: it.explanation || '',
         wrong: it.wrong,
         correct: it.correct,
@@ -2245,7 +2528,13 @@ function ClozeGame({ profileId, profile, cefrLevel, onExit }) {
   const choose = (i) => {
     if (phase !== 'question') return
     const ok = i === qs[index].answer
-    window.api.recordSkillEvent({ profileId, skill: 'vocabulary', correct: ok, source: 'cloze' })
+    window.api.recordSkillEvent({
+      profileId,
+      skill: 'vocabulary',
+      correct: ok,
+      source: 'cloze',
+      focus: 'Từ vựng trong ngữ cảnh'
+    })
     setPicked(i)
     if (ok) setScore((s) => s + 1)
     setPhase('answered')
@@ -2423,6 +2712,7 @@ function buildSpotRounds(mistakes, vocab, n) {
     const options = shuffleArr([o, c, third])
     rounds.push({
       skill: m.skill || 'other',
+      focus: m.category || m.skill || 'Nhận diện lỗi trong câu',
       explanation: m.explanation || '',
       wrong: o,
       correct: c,
@@ -2501,7 +2791,13 @@ function SpotGame({ profileId, profile, cefrLevel, onExit }) {
     if (phase !== 'question') return
     const r = rounds[index]
     const ok = i === r.answer
-    window.api.recordSkillEvent({ profileId, skill: r.skill, correct: ok, source: 'spot' })
+    window.api.recordSkillEvent({
+      profileId,
+      skill: r.skill,
+      correct: ok,
+      source: 'spot',
+      focus: r.focus || r.skillLabel || 'Nhận diện lỗi trong câu'
+    })
     setPicked(i)
     if (ok) setScore((s) => s + 1)
     setPhase('answered')
@@ -2771,6 +3067,13 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
     if (w == null || m == null) return
 
     if (w === m) {
+      window.api.recordSkillEvent({
+        profileId,
+        skill: 'vocabulary',
+        correct: true,
+        source: 'match',
+        focus: 'Ghép từ với nghĩa'
+      })
       const done = new Set(matched).add(w)
       setMatched(done)
       setScore((s) => s + 10 + Math.min(combo, 5) * 2)
@@ -2781,6 +3084,13 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
       setSelM(null)
       if (done.size === pairs.length) setTimeout(deal, 450)
     } else {
+      window.api.recordSkillEvent({
+        profileId,
+        skill: 'vocabulary',
+        correct: false,
+        source: 'match',
+        focus: 'Ghép từ với nghĩa'
+      })
       setCombo(0)
       setWrong((x) => x + 1)
       setTimeLeft((t) => Math.max(0, t - 2))
@@ -3143,7 +3453,7 @@ const structStyles = {
   }
 }
 
-function StructureScreen({ profileId, profile, cefrLevel, onExit }) {
+function StructureScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
   const [selectedId, setSelectedId] = useState(STRUCTURES[0].id)
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState('library') // library | quiz
@@ -3260,7 +3570,7 @@ function StructureScreen({ profileId, profile, cefrLevel, onExit }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {selected.examples.map(([en, vi], i) => (
                 <div key={i} style={structStyles.example}>
-                  <button style={vocabStyles.cardSpeak} onClick={() => speakText(en, speakLang)} title="Nghe đọc">
+                  <button style={vocabStyles.cardSpeak} onClick={() => speakText(en, speakLang, undefined, speechVoice)} title="Nghe đọc">
                     <Icon name="speaker" size={14} />
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -3280,7 +3590,7 @@ function StructureScreen({ profileId, profile, cefrLevel, onExit }) {
               </div>
             </div>
             {!isEnglish && (
-              <div style={{ fontSize: fs(12), color: '#c0392b' }}>Thư viện cấu trúc hiện viết cho tiếng Anh nên chưa thể luyện tập với ngôn ngữ bạn đang học.</div>
+              <div style={{ fontSize: fs(12), color: 'var(--danger)' }}>Thư viện cấu trúc hiện viết cho tiếng Anh nên chưa thể luyện tập với ngôn ngữ bạn đang học.</div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <SegmentedControl
@@ -3531,7 +3841,6 @@ const progressStyles = {
   }
 }
 
-const MIN_SAMPLE = 3 // tuần có ít hơn số tin nhắn này thì coi là chưa đáng tin
 const weekLabel = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
 
 function BarChart({ data, height = 100, labelEvery = 1, showValues = true }) {
@@ -3571,44 +3880,7 @@ function BarChart({ data, height = 100, labelEvery = 1, showValues = true }) {
   )
 }
 
-// Dữ liệu cho biểu đồ "lỗi trên mỗi 10 tin nhắn"
-function rateData(weeks) {
-  return weeks.map((w) => ({
-    label: weekLabel(w),
-    value: w.rate,
-    low: w.messages < MIN_SAMPLE,
-    tip: w.rate === null ? `Tuần ${weekLabel(w)}: không có tin nhắn` : `Tuần ${weekLabel(w)}: ${w.rate} lỗi/10 tin (${w.messages} tin nhắn)`
-  }))
-}
-
-function RateSummary({ weeks }) {
-  const ok = weeks.filter((w) => w.rate !== null && w.messages >= MIN_SAMPLE)
-  let text
-  let color = 'var(--text-muted)'
-  if (ok.length < 2) {
-    text = `Chưa đủ dữ liệu để so sánh: cần ít nhất 2 tuần có từ ${MIN_SAMPLE} tin nhắn trở lên.`
-  } else {
-    const a = ok[ok.length - 1]
-    const b = ok[ok.length - 2]
-    const diff = Math.round((a.rate - b.rate) * 10) / 10
-    const trend = diff < 0 ? `giảm ${Math.abs(diff)}` : diff > 0 ? `tăng ${diff}` : 'không đổi'
-    color = diff < 0 ? '#27ae60' : diff > 0 ? '#c0392b' : 'var(--text-muted)'
-    text = `Tuần ${weekLabel(a)}: ${a.rate} lỗi/10 tin, ${trend} so với tuần ${weekLabel(b)} (${b.rate}).`
-  }
-  const hasLow = weeks.some((w) => w.rate !== null && w.messages < MIN_SAMPLE)
-  return (
-    <>
-      <div style={{ fontSize: fs(12), fontWeight: '600', color, marginTop: '8px', lineHeight: 1.5 }}>{text}</div>
-      {hasLow && (
-        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '2px' }}>
-          Cột nét đứt: tuần có dưới {MIN_SAMPLE} tin nhắn, số liệu chưa đáng tin.
-        </div>
-      )}
-    </>
-  )
-}
-
-const masteryColor = (m) => (m === null ? 'var(--border)' : m >= 70 ? '#27ae60' : m >= 40 ? '#e0a100' : '#c0392b')
+const masteryColor = (m) => (m === null ? 'var(--border)' : m >= 70 ? '#27ae60' : m >= 40 ? '#e0a100' : 'var(--danger)')
 
 function SkillRadar({ skills }) {
   const cx = 170
@@ -3667,12 +3939,13 @@ function SkillRadar({ skills }) {
   )
 }
 
-function SkillMap({ skills }) {
-  const has = skills.some((s) => s.mastery !== null || s.chatErrors > 0)
+function SkillMap({ skills, focuses = [] }) {
+  const [expandedSkill, setExpandedSkill] = useState(null)
+  const has = skills.some((s) => s.mastery !== null || s.chatErrors > 0) || focuses.length > 0
   if (!has) {
     return (
       <div style={{ ...progressStyles.cardSub, marginTop: '10px' }}>
-        Chưa có dữ liệu. Làm vài bài trắc nghiệm hoặc ôn lỗi cũ, bản đồ kỹ năng sẽ hiện ra ở đây.
+        Chưa có dữ liệu. Làm bài tập hoặc trò chuyện bằng tiếng Anh để bắt đầu ghi nhận các chủ điểm.
       </div>
     )
   }
@@ -3683,35 +3956,102 @@ function SkillMap({ skills }) {
         <SkillRadar skills={skills} />
       </div>
       <div style={{ marginTop: '8px' }}>
-        {sorted.map((s) => (
-          <div key={s.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: fs(13) }}>
-              <span style={{ fontWeight: '600' }}>{s.label}</span>
-              <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
-                {s.mastery === null ? 'Chưa đủ dữ liệu' : `${s.mastery}/100 · ${s.correct}/${s.total} đúng`}
-              </span>
+        {sorted.map((s) => {
+          const expanded = expandedSkill === s.id
+          const topicResults = focuses.filter((item) => item.skill === s.id)
+          return (
+            <div key={s.id} style={{ padding: '4px 0', borderBottom: '1px solid var(--border-soft)' }}>
+              <button
+                type="button"
+                aria-expanded={expanded}
+                onClick={() => setExpandedSkill(expanded ? null : s.id)}
+                style={{
+                  width: '100%',
+                  padding: '7px 0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  border: 0,
+                  background: 'transparent',
+                  color: 'var(--text)',
+                  textAlign: 'left',
+                  cursor: 'pointer'
+                }}
+              >
+                <span style={{ width: '100%', display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: fs(13) }}>
+                  <span style={{ fontWeight: '600' }}>{s.label}</span>
+                  <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+                    {s.mastery === null ? 'Chưa đủ dữ liệu' : `${s.mastery}/100 · ${s.correct}/${s.total} đúng`}
+                    <span aria-hidden="true" style={{ marginLeft: '8px' }}>{expanded ? '⌃' : '⌄'}</span>
+                  </span>
+                </span>
+                <span style={{ width: '100%', height: '6px', borderRadius: '999px', background: 'var(--border-soft)', marginTop: '4px', overflow: 'hidden' }}>
+                  <span style={{ display: 'block', width: `${s.mastery ?? 0}%`, height: '100%', background: masteryColor(s.mastery), borderRadius: '999px' }} />
+                </span>
+              </button>
+              {s.chatErrors > 0 && (
+                <div style={{ fontSize: fs(11), color: 'var(--text-muted)', margin: '0 0 5px' }}>
+                  {s.chatErrors} lỗi trong chat (30 ngày gần đây)
+                </div>
+              )}
+              {expanded && (
+                <div style={{ padding: '4px 10px 8px', borderLeft: '2px solid var(--border)', margin: '2px 0 8px 2px' }}>
+                  {topicResults.length === 0 ? (
+                    <div style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>
+                      Chưa có dữ liệu theo chủ điểm. Kết quả bài tập và lỗi được nhận diện trong chat sẽ hiện ở đây.
+                    </div>
+                  ) : topicResults.map((item) => {
+                    const status = item.total < 3 && item.chatErrors >= 3
+                      ? 'Lỗi lặp lại trong chat · cần bài tập xác nhận'
+                      : item.total < 3 && item.chatErrors > 0
+                        ? 'Có lỗi trong chat · chưa đủ bài tập xác nhận'
+                        : item.total < 3
+                          ? 'Chưa đủ lượt đánh giá'
+                          : item.needsPractice
+                        ? 'Cần luyện thêm'
+                        : item.accuracy >= 80
+                          ? 'Đang vững'
+                          : 'Đang cải thiện'
+                    const statusColor = item.total < 3 && item.chatErrors >= 3
+                      ? '#e9aa5f'
+                      : item.total < 3
+                      ? 'var(--text-muted)'
+                      : item.needsPractice
+                        ? '#e9aa5f'
+                        : item.accuracy >= 80
+                          ? '#70c99a'
+                          : 'var(--text-soft)'
+                    return (
+                      <div key={`${item.skill}-${item.focus}`} style={{ padding: '7px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: 'var(--text-strong)', fontSize: fs(13), fontWeight: '600' }}>{item.focus}</div>
+                          <div style={{ color: statusColor, fontSize: fs(11), marginTop: '2px' }}>{status}</div>
+                        </div>
+                        <div style={{ flexShrink: 0, color: 'var(--text-soft)', fontSize: fs(12), textAlign: 'right' }}>
+                          {item.total > 0 ? `${item.correct}/${item.total} đúng` : 'Chưa có bài tập'}
+                          {item.total >= 3 && <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>{item.accuracy}%</div>}
+                          {item.chatErrors > 0 && <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>{item.chatErrors} lỗi chat</div>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
-            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border-soft)', marginTop: '6px', overflow: 'hidden' }}>
-              <div style={{ width: `${s.mastery ?? 0}%`, height: '100%', background: masteryColor(s.mastery), borderRadius: '999px' }} />
-            </div>
-            {s.chatErrors > 0 && (
-              <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '4px' }}>
-                {s.chatErrors} lỗi trong chat (30 ngày gần đây)
-              </div>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </>
   )
 }
 
-function ProgressScreen({ profileId, profile, onExit }) {
+function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onStartFocusedPractice }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [insight, setInsight] = useState('')
   const [insightBusy, setInsightBusy] = useState(false)
   const [insightErr, setInsightErr] = useState('')
+  const [showAssessmentHistory, setShowAssessmentHistory] = useState(false)
 
   useEffect(() => {
     window.api.getProgress({ profileId }).then((res) => {
@@ -3739,19 +4079,22 @@ function ProgressScreen({ profileId, profile, onExit }) {
 
   if (loading) return wrap(<p>Đang tính số liệu...</p>)
 
-  if (!data || data.totals.messages === 0) {
+  if (!data || (data.totals.messages === 0 && !(data.exerciseFocuses || []).length && !(data.assessments || []).length)) {
     return wrap(
       <>
         <h2 style={styles.question}>Tiến bộ của bạn</h2>
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>
-          Chưa có đủ dữ liệu. Hãy trò chuyện với AI vài ngày, số liệu sẽ xuất hiện ở đây.
+          Chưa có dữ liệu học tập. Bạn có thể làm bài đánh giá tổng quát để bắt đầu theo dõi.
         </p>
+        <button className="qprimary" style={quizStyles.primary} onClick={() => onStartAssessment(null)}>Làm bài đánh giá tổng quát</button>
+        <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: 0, fontSize: fs(12) }}>15 câu từ dễ đến khó. Điểm chỉ là thang tham khảo nội bộ, không phải chứng chỉ CEFR; bài chưa đánh giá nghe/nói.</p>
         <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
       </>
     )
   }
 
   const { weeks, categories, totals, levels } = data
+  const assessments = data.assessments || []
   const wl = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
   const sourceLabel = (s) => (s === 'placement' ? 'bài đánh giá' : 'tự chọn')
 
@@ -3781,24 +4124,96 @@ function ProgressScreen({ profileId, profile, onExit }) {
           <div style={progressStyles.statLabel}>lỗi đã nhớ vững (ôn đúng từ 7 ngày)</div>
         </div>
       </div>
+
+      <div style={{ ...progressStyles.card, maxWidth: '640px', padding: '18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <div style={progressStyles.cardTitle}>Bài đánh giá tổng quát</div>
+            <div style={progressStyles.cardSub}>15 câu · cùng ma trận · từ dễ đến khó</div>
+          </div>
+          <button className="qprimary" style={{ ...quizStyles.primary, whiteSpace: 'nowrap', padding: '8px 13px', fontSize: fs(12), minHeight: 'unset' }} onClick={() => onStartAssessment(assessments[0] || null)}>
+            {assessments.length ? 'Làm lại bài đánh giá' : 'Bắt đầu đánh giá'}
+          </button>
+        </div>
+
+        {assessments.length === 0 ? (
+          <div style={{ marginTop: '14px', padding: '12px 14px', borderRadius: '12px', background: 'var(--surface-soft)', color: 'var(--text-muted)', fontSize: fs(13) }}>
+            Lần đầu làm bài sẽ tạo mốc ban đầu để theo dõi tiến bộ.
+          </div>
+        ) : (() => {
+          const latest = assessments[0]
+          const previous = assessments[1]
+          const pct = Math.round(latest.correct / latest.total * 100)
+          const change = previous ? pct - Math.round(previous.correct / previous.total * 100) : null
+          const signals = [...(latest.signals || [])].sort((a, b) => {
+            const priority = { practice: 0, limited: 1, monitor: 2 }
+            return priority[a.status] - priority[b.status] || a.correct / a.total - b.correct / b.total
+          })
+          const practiceSignals = signals.filter((signal) => signal.status === 'practice')
+          const weakest = practiceSignals[0]
+
+          return <>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginTop: '14px', padding: '12px 14px', borderRadius: '12px', background: 'var(--surface-soft)' }}>
+              <div>
+                <div style={{ color: 'var(--text-muted)', fontSize: fs(11), fontWeight: '600' }}>LẦN GẦN NHẤT · {latest.at?.slice(0, 10)}</div>
+                {change !== null && <div style={{ color: change > 0 ? '#27ae60' : change < 0 ? 'var(--danger)' : 'var(--text-muted)', fontSize: fs(12), marginTop: '3px' }}>
+                  {change > 0 ? `Tăng ${change}` : change < 0 ? `Giảm ${Math.abs(change)}` : 'Không đổi'} điểm phần trăm so với lần trước
+                </div>}
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <strong style={{ display: 'block', color: scoreColor(latest.correct, latest.total), fontSize: fs(20) }}>{latest.correct}/{latest.total}</strong>
+                <span style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>{pct}%</span>
+              </div>
+            </div>
+
+            {signals.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', marginTop: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                <div style={progressStyles.cardTitle}>Gợi ý luyện tập</div>
+                <div style={{ color: 'var(--text-muted)', fontSize: fs(11) }}>Từ lần đánh giá gần nhất</div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '7px' }}>
+                {signals.map((signal) => {
+                  const tone = signal.status === 'practice' ? 'var(--danger)' : 'var(--text-muted)'
+                  const status = signal.status === 'practice' ? 'Cần củng cố' : signal.status === 'limited' ? 'Cần thêm dữ liệu' : 'Đang theo dõi'
+                  return <div key={signal.skill} style={{ minWidth: 0, padding: '9px 11px', borderRadius: '10px', border: '1px solid var(--border-soft)', background: 'var(--surface)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                      <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: fs(12) }} title={signal.label}>{signal.label}</strong>
+                      <span style={{ color: tone, fontSize: fs(11), whiteSpace: 'nowrap' }}>{signal.correct}/{signal.total}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginTop: '4px', fontSize: fs(11) }}>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }} title={signal.focus}>{signal.focus}</span>
+                      <span style={{ color: tone, flexShrink: 0 }}>{status}</span>
+                    </div>
+                  </div>
+                })}
+              </div>
+              {weakest && <button className="qprimary" style={{ ...quizStyles.primary, display: 'flex', width: 'fit-content', alignSelf: 'flex-end', marginTop: '10px', padding: '8px 13px', fontSize: fs(12), minHeight: 'unset' }} onClick={() => onStartFocusedPractice?.(weakest.skill, weakest.focus)}>
+                Luyện chủ điểm cần củng cố
+              </button>}
+            </div>}
+
+            {assessments.length > 1 && <div style={{ marginTop: '12px', borderTop: '1px solid var(--border-soft)', paddingTop: '8px' }}>
+              <button className="qghost" style={{ ...quizStyles.ghost, padding: '5px 0', fontSize: fs(12) }} onClick={() => setShowAssessmentHistory((value) => !value)}>
+                {showAssessmentHistory ? 'Ẩn lịch sử' : `Lịch sử ${assessments.length - 1} lần trước`}
+              </button>
+              {showAssessmentHistory && assessments.slice(1).map((attempt) => <div key={attempt.id} style={{ ...progressStyles.catRow, fontSize: fs(12) }}>
+                <span>{attempt.at?.slice(0, 10)}</span>
+                <span style={{ color: scoreColor(attempt.correct, attempt.total) }}>{attempt.correct}/{attempt.total} · {Math.round(attempt.correct / attempt.total * 100)}%</span>
+              </div>)}
+            </div>}
+          </>
+        })()}
+        <div style={{ color: 'var(--text-muted)', fontSize: fs(11), marginTop: '12px' }}>Thang tham khảo nội bộ · không phải chứng chỉ CEFR · chưa đánh giá nghe/nói</div>
+      </div>
      
 
       
       <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
         <div style={progressStyles.cardTitle}>Bản đồ kỹ năng</div>
         <div style={progressStyles.cardSub}>
-          Điểm làm chủ = tỷ lệ đúng trong quiz và ôn lỗi gần đây (tối đa 20 câu mỗi kỹ năng, có làm mượt). Kỹ năng dưới 3 câu chưa được tính (hiện vòng rỗng). Nhãn kỹ năng do AI gán nên có thể có sai số.
+          Điểm làm chủ chỉ tính kết quả bài tập và ôn lỗi (tối đa 20 lượt mỗi kỹ năng). Lỗi nhận diện trong chat được hiển thị riêng như tín hiệu cần kiểm tra, không tự tính thành câu sai trong bài tập.
         </div>
-        <SkillMap skills={data.skills || []} />
-      </div>
-
-      <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
-        <div style={progressStyles.cardTitle}>Lỗi trên mỗi 10 tin nhắn</div>
-        <div style={progressStyles.cardSub}>
-          Thấp hơn là tốt hơn. Tuần không có tin nhắn được để trống. Đây chỉ là chỉ báo gần đúng, vì còn phụ thuộc độ khó chủ đề và độ dài tin nhắn.
-        </div>
-        <RateSummary weeks={weeks} />
-        <BarChart data={rateData(weeks)} />
+        <SkillMap skills={data.skills || []} focuses={data.exerciseFocuses || []} />
       </div>
 
       <div style={{ ...progressStyles.card, maxWidth: '640px' }}>
@@ -3819,7 +4234,7 @@ function ProgressScreen({ profileId, profile, onExit }) {
                 : diff < 0
                   ? { text: 'Giảm', color: '#27ae60' }
                   : diff > 0
-                    ? { text: 'Tăng', color: '#c0392b' }
+                    ? { text: 'Tăng', color: 'var(--danger)' }
                     : { text: 'Giữ nguyên', color: 'var(--text-muted)' }
             return (
               <div key={c.category} style={progressStyles.catRow}>
@@ -3859,7 +4274,7 @@ function ProgressScreen({ profileId, profile, onExit }) {
           </button>
         </div>
         {insight && <div style={{ marginTop: '10px', fontSize: fs(14), lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{insight}</div>}
-        {insightErr && <div style={{ marginTop: '10px', fontSize: fs(13), color: '#c0392b' }}>{insightErr}</div>}
+        {insightErr && <div style={{ marginTop: '10px', fontSize: fs(13), color: 'var(--danger)' }}>{insightErr}</div>}
         {!insight && !insightErr && (
           <div style={progressStyles.cardSub}>AI sẽ đọc các số liệu ở trên và viết vài câu nhận xét kèm một gợi ý cho tuần tới.</div>
         )}
@@ -3915,25 +4330,16 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
   return (
     <>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <div style={styles.statCard}>
+        <div className="stat-card" style={styles.statCard}>
           <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>{totals.messages}</div>
           <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>tin nhắn đã gửi</div>
         </div>
-        <div style={styles.statCard}>
+        <div className="stat-card" style={styles.statCard}>
           <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>
             {totals.mastered}/{totals.mistakes}
           </div>
           <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>lỗi đã nhớ vững</div>
         </div>
-      </div>
-
-      <div style={styles.statCard}>
-        <div style={{ fontSize: fs(13), fontWeight: '700' }}>Lỗi trên mỗi 10 tin nhắn</div>
-        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: '2px' }}>
-          8 tuần gần đây · thấp hơn là tốt hơn
-        </div>
-        <RateSummary weeks={weeks} />
-        <BarChart height={70} labelEvery={2} data={rateData(weeks)} />
       </div>
 
       {/* Thẻ mới: Kỹ năng cần luyện */}
@@ -3943,7 +4349,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
         const chatOnly = sk.filter((s) => s.chatErrors > 0).sort((a, b) => b.chatErrors - a.chatErrors).slice(0, 3)
         const list = scored.length > 0 ? scored : chatOnly
         return (
-          <div style={styles.statCard}>
+          <div className="stat-card" style={styles.statCard}>
             <div style={{ fontSize: fs(13), fontWeight: '700' }}>Kỹ năng cần luyện</div>
             <div style={{ fontSize: fs(11), color: 'var(--text-muted)', margin: '2px 0 8px' }}>
               {scored.length > 0 ? 'Điểm thấp nhất từ quiz và ôn lỗi' : 'Dựa trên lỗi trong chat (chưa có điểm quiz)'}
@@ -3966,7 +4372,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
         )
       })()}
 
-      <div style={styles.statCard}>
+      <div className="stat-card" style={styles.statCard}>
         <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '4px' }}>Loại lỗi hay gặp</div>
         <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginBottom: '6px' }}>4 tuần gần đây so với trước đó</div>
         {categories.length === 0 && <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
@@ -3978,7 +4384,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
               : diff < 0
                 ? { text: 'Giảm', color: '#27ae60' }
                 : diff > 0
-                  ? { text: 'Tăng', color: '#c0392b' }
+                  ? { text: 'Tăng', color: 'var(--danger)' }
                   : { text: 'Giữ', color: 'var(--text-muted)' }
           return (
             <div key={c.category} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: fs(12), marginBottom: '4px' }}>
@@ -3990,7 +4396,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
         })}
       </div>
 
-      <div style={styles.statCard}>
+      <div className="stat-card" style={styles.statCard}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
           <div style={{ fontSize: fs(13), fontWeight: '700' }}>Nhận xét của AI</div>
           <button
@@ -4002,7 +4408,7 @@ function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
           </button>
         </div>
         {insight && <div style={{ marginTop: '8px', fontSize: fs(12), lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{insight}</div>}
-        {err && <div style={{ marginTop: '8px', fontSize: fs(12), color: '#c0392b' }}>{err}</div>}
+        {err && <div style={{ marginTop: '8px', fontSize: fs(12), color: 'var(--danger)' }}>{err}</div>}
       </div>
 
       <button
@@ -4249,7 +4655,7 @@ const exStyles = {
   empty: { gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)', fontSize: fs(14), padding: '48px 16px', lineHeight: 1.6 }
 }
 
-function VocabStudy({ cards, title, speakLang, onBack }) {
+function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
   const [list, setList] = useState(cards)
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
@@ -4301,7 +4707,7 @@ function VocabStudy({ cards, title, speakLang, onBack }) {
           style={vocabStyles.cardSpeak}
           onClick={(e) => {
             e.stopPropagation()
-            speakText(card.word, speakLang)
+            speakText(card.word, speakLang, undefined, speechVoice)
           }}
           title="Nghe phát âm"
         >
@@ -4334,7 +4740,7 @@ function VocabStudy({ cards, title, speakLang, onBack }) {
   )
 }
 
-function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
+function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
   const [words, setWords] = useState([])
   const [folders, setFolders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -4547,7 +4953,7 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
   }
 
   if (mode === 'study') {
-    return <VocabStudy cards={visible} title={title} speakLang={speakLang} onBack={() => setMode('explorer')} />
+    return <VocabStudy cards={visible} title={title} speakLang={speakLang} speechVoice={speechVoice} onBack={() => setMode('explorer')} />
   }
 
   return (
@@ -4798,7 +5204,7 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
           <div style={{ ...settingsStyles.modal, width: '420px' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
               <div style={{ fontSize: fs(24), fontWeight: '700', color: 'var(--text-strong)', flex: 1, wordBreak: 'break-word' }}>{detail.word}</div>
-              <button style={vocabStyles.cardSpeak} onClick={() => speakText(detail.word, speakLang)} title="Nghe phát âm">
+              <button style={vocabStyles.cardSpeak} onClick={() => speakText(detail.word, speakLang, undefined, speechVoice)} title="Nghe phát âm">
                 <Icon name="speaker" size={16} />
               </button>
               <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setDetail(null)}>
@@ -4863,7 +5269,7 @@ function VocabScreen({ profileId, profile, cefrLevel, onExit }) {
   )
 }
 
-function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
+function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfileChange }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
     nativeLanguage:'',
@@ -4876,14 +5282,37 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
   const [isLoading, setIsLoading] = useState(false)
   const [placementResult, setPlacementResult] = useState(null)
   const [chatHistory, setChatHistory] = useState([])
+  const [voiceChatHistory, setVoiceChatHistory] = useState([])
+  const [voiceLiveTranscript, setVoiceLiveTranscript] = useState('')
+  const [voiceSpeechDetected, setVoiceSpeechDetected] = useState(false)
+  const [voicePendingTranscript, setVoicePendingTranscript] = useState('')
+  const [autoSendVoice, setAutoSendVoice] = useState(() => {
+    try { return window.localStorage.getItem('voiceAutoSend') === 'true' } catch { return false }
+  })
+  const [voiceAutoSendCountdown, setVoiceAutoSendCountdown] = useState(null)
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
+  const [voiceMode, setVoiceMode] = useState(false)
+  const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false)
+  const [voiceError, setVoiceError] = useState('')
+  const [voiceChatMode, setVoiceChatMode] = useState('free')
+  const [selectedVoiceScenario, setSelectedVoiceScenario] = useState(voiceRoleplayScenarios[0].id)
+  const [customVoiceScenario, setCustomVoiceScenario] = useState('')
+  const [activeVoiceScenarioPrompt, setActiveVoiceScenarioPrompt] = useState('')
+  const [activeVoiceScenarioTitle, setActiveVoiceScenarioTitle] = useState('')
+  const voiceModeRef = useRef(false)
+  const speechControlRef = useRef(null)
+  const voiceRestartTimerRef = useRef(null)
   const [mistakes, setMistakes] = useState([])
   const [showReview, setShowReview] = useState(false)
   const [showPractice, setShowPractice] = useState(false)
   const [showVocab, setShowVocab] = useState(false)
   const [showStructures, setShowStructures] = useState(false)
   const [showProgress, setShowProgress] = useState(false)
+  const [showAssessment, setShowAssessment] = useState(false)
+  const [assessmentBaseline, setAssessmentBaseline] = useState(null)
+  const [focusedPractice, setFocusedPractice] = useState(null)
+  const [showVoiceChat, setShowVoiceChat] = useState(false)
   const [rightTab, setRightTab] = useState('today') 
   const [username, setUsername] = useState('')
   const [existingProfiles, setExistingProfiles] = useState([])
@@ -4909,6 +5338,39 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
   const [notesMsg, setNotesMsg] = useState('')
   const chatBoxRef = useRef(null)
   const prevLenRef = useRef(0)
+  const prevVoiceLenRef = useRef(0)
+
+  const stopVoicePractice = () => {
+    voiceModeRef.current = false
+    setVoiceMode(false)
+    setIsVoiceSpeaking(false)
+    setVoiceLiveTranscript('')
+    setVoiceSpeechDetected(false)
+    setVoicePendingTranscript('')
+    setVoiceError('')
+    window.clearTimeout(voiceRestartTimerRef.current)
+    voiceRestartTimerRef.current = null
+    speechControlRef.current?.stop()
+    cancelNaturalSpeech()
+  }
+
+  const scheduleVoiceRestart = useCallback((delay = 350) => {
+    window.clearTimeout(voiceRestartTimerRef.current)
+    voiceRestartTimerRef.current = window.setTimeout(() => {
+      voiceRestartTimerRef.current = null
+      if (voiceModeRef.current) {
+        setVoiceError('')
+        speechControlRef.current?.start()
+      }
+    }, delay)
+  }, [])
+
+  useEffect(() => () => {
+    voiceModeRef.current = false
+    window.clearTimeout(voiceRestartTimerRef.current)
+    speechControlRef.current?.stop()
+    cancelNaturalSpeech()
+  }, [])
 
   // Gắn vào khung chat: mỗi lần khung xuất hiện (vào app, quay về từ màn khác) tự cuộn xuống cuối
   const setChatBox = useCallback((el) => {
@@ -4919,11 +5381,14 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange }) {
   // Có tin mới hoặc chấm "đang trả lời": cuộn xuống cuối (mượt khi thêm 1-2 tin, tức thì khi nạp cả đoạn chat)
   useEffect(() => {
     const el = chatBoxRef.current
-    const grew = chatHistory.length - prevLenRef.current
+    const grew = showVoiceChat
+      ? voiceChatHistory.length - prevVoiceLenRef.current
+      : chatHistory.length - prevLenRef.current
     prevLenRef.current = chatHistory.length
+    prevVoiceLenRef.current = voiceChatHistory.length
     if (!el) return
     el.scrollTo({ top: el.scrollHeight, behavior: grew > 0 && grew <= 2 ? 'smooth' : 'auto' })
-  }, [chatHistory.length, isChatLoading])
+  }, [chatHistory.length, voiceChatHistory.length, isChatLoading, showVoiceChat])
 
   useEffect(() => {
   window.api.getProfiles().then((res) => {
@@ -4945,6 +5410,8 @@ const handleStartNewAccount = async () => {
   const handleLoginExisting = async (p) => {
   setUsername(p.username)  
   setProfileId(p.id)
+  onActiveProfileChange?.(p.id)
+  setVoiceChatHistory([])
   setProfile({
     nativeLanguage: p.native_language,
     targetLanguage: p.target_language,
@@ -4994,6 +5461,7 @@ const handleStartNewAccount = async () => {
 
     setPlacementResult({ level, feedback: feedback || '' })
     setProfileId(saveResult.id)
+    onActiveProfileChange?.(saveResult.id)
     setConversations([])
     setCurrentConversationId(null)
     handleNext()
@@ -5038,12 +5506,14 @@ const handleStartNewAccount = async () => {
     }
   }
   const handleOpenReview = async () => {
+  stopVoicePractice()
   const result = await window.api.getMistakes({ profileId })
   setMistakes(result.mistakes || [])
   setShowReview(true)
 }
 
 const handleOpenEditProfile = () => {
+  stopVoicePractice()
   setEditForm({
     nativeLanguage: profile.nativeLanguage,
     targetLanguage: profile.targetLanguage,
@@ -5056,6 +5526,7 @@ const handleOpenEditProfile = () => {
 }
 
 const handleOpenNotes = async () => {
+  stopVoicePractice()
   setNotesMsg('')
   const res = await window.api.getLearnerNotes({ profileId })
   setNotesForm({ notes: res.notes || '', enabled: res.enabled !== false })
@@ -5153,6 +5624,7 @@ const switchConversation = async (convId) => {
 }
 
 const handleNewConversation = () => {
+  stopVoicePractice()
   setShowTopicPicker(true)
 }
 
@@ -5181,47 +5653,217 @@ const confirmDeleteConversation = async () => {
 }
 
 
-const handleSendMessage = async () => {
-  if (!chatInput.trim()) return
+const handleSendMessage = async (messageOverride, options = {}) => {
+  const { voiceKickoff = false, voiceScenarioPrompt = activeVoiceScenarioPrompt } = options
+  const message = typeof messageOverride === 'string' ? messageOverride : chatInput
+  const trimmedMessage = message.trim()
+  if ((!trimmedMessage && !voiceKickoff) || isChatLoading) return
 
-  const userMessage = { role: 'user', text: chatInput }
-  const newHistory = [...chatHistory, userMessage]
-  setChatHistory(newHistory)
-  setChatInput('')
+  const isVoiceChat = voiceModeRef.current || showVoiceChat
+  const userMessage = trimmedMessage ? { role: 'user', text: trimmedMessage } : null
+  const activeHistory = isVoiceChat ? voiceChatHistory : chatHistory
+  const newHistory = voiceKickoff ? [] : userMessage ? [...activeHistory, userMessage] : activeHistory
+  if (isVoiceChat) setVoiceChatHistory(newHistory)
+  else {
+    setChatHistory(newHistory)
+    setChatInput('')
+  }
   setIsChatLoading(true)
+  setVoiceError('')
 
   try {
     const result = await window.api.sendChatMessage({
       profileId: profileId,
-      conversationId: currentConversationId,
-      topic: currentTopic,
+      conversationId: isVoiceChat ? null : currentConversationId,
+      topic: isVoiceChat ? null : currentTopic,
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
       goal: profile.goal,
-      history: chatHistory.slice(-6),
-      message: userMessage.text
+      voiceChat: isVoiceChat,
+      voiceScenarioPrompt: isVoiceChat ? voiceScenarioPrompt : '',
+      history: voiceKickoff ? [] : activeHistory.slice(-6),
+      message: userMessage?.text || 'Start the selected role-play now with one short in-character opening line and a natural question for the learner.'
     })
-    setChatHistory([...newHistory, { role: 'model', text: result.reply, mistakes: result.mistakes || [] }])
-    if (result.conversationId && result.conversationId !== currentConversationId) {
+    const completedHistory = [...newHistory, { role: 'model', text: result.reply, mistakes: result.mistakes || [] }]
+    if (isVoiceChat) setVoiceChatHistory(completedHistory)
+    else setChatHistory(completedHistory)
+    if (!isVoiceChat && result.conversationId && result.conversationId !== currentConversationId) {
       setCurrentConversationId(result.conversationId)
     }
-    loadConversations(profileId)
-    refreshMistakes()
-    refreshDailyStats()
+    if (!isVoiceChat) {
+      loadConversations(profileId)
+      refreshMistakes()
+      refreshDailyStats()
+    }
+    if (voiceModeRef.current) {
+      setVoiceLiveTranscript('')
+      const spokenReply = getVoiceSpeechText(result.reply, profile.nativeLanguage)
+      if (spokenReply) {
+        setIsVoiceSpeaking(true)
+        speakNaturalText(spokenReply, speechLang, () => {
+          setIsVoiceSpeaking(false)
+          scheduleVoiceRestart()
+        }, settings.speechVoice)
+      } else {
+        setIsVoiceSpeaking(false)
+        scheduleVoiceRestart()
+      }
+    }
   } catch (error) {
     console.error('Error:', error)
+    if (voiceModeRef.current) {
+      setVoiceError('Chưa nhận được câu trả lời. Hãy thử nói lại.')
+      scheduleVoiceRestart(500)
+    }
   } finally {
     setIsChatLoading(false)
   }
 }
 
+const handleVoiceTranscript = (transcript) => {
+  const phrase = transcript.trim()
+  if (!voiceModeRef.current) return
+  setVoiceLiveTranscript(phrase)
+  if (!phrase) {
+    scheduleVoiceRestart()
+    return
+  }
+  setVoiceError('')
+  setVoicePendingTranscript(phrase)
+}
+
+const voiceInput = useSpeechInput(handleVoiceTranscript, setVoiceSpeechDetected)
+
+const sendVoiceTranscript = () => {
+  const phrase = voicePendingTranscript.trim()
+  if (!phrase || isChatLoading) return
+  setVoicePendingTranscript('')
+  setVoiceLiveTranscript('')
+  setVoiceSpeechDetected(false)
+  setVoiceAutoSendCountdown(null)
+  handleSendMessage(phrase)
+}
+
+const retryVoiceTranscript = () => {
+  setVoicePendingTranscript('')
+  setVoiceLiveTranscript('')
+  setVoiceSpeechDetected(false)
+  setVoiceAutoSendCountdown(null)
+  setVoiceError('')
+  voiceInput.start()
+}
+
+const toggleVoiceAutoSend = (enabled) => {
+  setAutoSendVoice(enabled)
+  try { window.localStorage.setItem('voiceAutoSend', String(enabled)) } catch { /* storage is optional */ }
+}
+
+useEffect(() => {
+  if (!autoSendVoice || !voicePendingTranscript) {
+    setVoiceAutoSendCountdown(null)
+    return undefined
+  }
+  let remaining = 5
+  setVoiceAutoSendCountdown(remaining)
+  const timer = window.setInterval(() => {
+    remaining -= 1
+    if (remaining <= 0) {
+      window.clearInterval(timer)
+      setVoiceAutoSendCountdown(0)
+      sendVoiceTranscript()
+    } else {
+      setVoiceAutoSendCountdown(remaining)
+    }
+  }, 1000)
+  return () => window.clearInterval(timer)
+}, [autoSendVoice, voicePendingTranscript])
+
+useEffect(() => {
+  speechControlRef.current = voiceInput
+}, [voiceInput])
+
+useEffect(() => {
+  if (voiceModeRef.current && voiceInput.error === 'no-speech') {
+    setVoiceError(speechErrorMessage(voiceInput.error))
+    scheduleVoiceRestart(700)
+  }
+}, [voiceInput.error, scheduleVoiceRestart])
+
+const toggleVoicePractice = () => {
+  if (voiceModeRef.current) {
+    if (voiceInput.error) {
+      setVoiceError('')
+      voiceInput.start()
+      return
+    }
+    stopVoicePractice()
+    return
+  }
+
+  voiceModeRef.current = true
+  setVoiceMode(true)
+  setVoiceError('')
+  setVoiceLiveTranscript('')
+  voiceInput.start()
+}
+
+const startVoiceChatSession = () => {
+  if (!voiceInput.supported) return
+  if (voiceChatMode === 'free') {
+    setActiveVoiceScenarioPrompt('')
+    setActiveVoiceScenarioTitle('')
+    toggleVoicePractice()
+    return
+  }
+
+  let scenarioPrompt = ''
+  let scenarioTitle = ''
+  let scenarioOpeningLine = ''
+  if (voiceChatMode === 'scenario') {
+    const selected = voiceRoleplayScenarios.find((scenario) => scenario.id === selectedVoiceScenario)
+    scenarioPrompt = selected?.prompt || ''
+    scenarioTitle = selected?.title || 'Tình huống giao tiếp'
+    scenarioOpeningLine = selected?.openingLine || ''
+  } else {
+    scenarioPrompt = customVoiceScenario.trim()
+    scenarioTitle = 'Tình huống của bạn'
+    if (!scenarioPrompt) {
+      setVoiceError('Hãy mô tả tình huống bạn muốn luyện trước khi bắt đầu.')
+      return
+    }
+  }
+
+  setActiveVoiceScenarioPrompt(scenarioPrompt)
+  setActiveVoiceScenarioTitle(scenarioTitle)
+  setVoiceChatHistory([])
+  setVoiceLiveTranscript('')
+  setVoicePendingTranscript('')
+  setVoiceSpeechDetected(false)
+  setVoiceError('')
+  voiceModeRef.current = true
+  setVoiceMode(true)
+  if (scenarioOpeningLine) {
+    setVoiceChatHistory([{ role: 'model', text: scenarioOpeningLine, mistakes: [] }])
+    setIsVoiceSpeaking(true)
+    speakNaturalText(scenarioOpeningLine, speechLang, () => {
+      setIsVoiceSpeaking(false)
+      scheduleVoiceRestart()
+    }, settings.speechVoice)
+    return
+  }
+  handleSendMessage('', { voiceKickoff: true, voiceScenarioPrompt: scenarioPrompt })
+}
+
 const handleLogout = () => {
+  stopVoicePractice()
   setStep(0)
   setProfileId(null)
+  onActiveProfileChange?.(null)
   setProfile({ nativeLanguage: '', targetLanguage: '', goal: '', occupation: '', interests: '' })
   setPlacementResult(null)
   setChatHistory([])
+  setVoiceChatHistory([])
   setMistakes([])
   setUsername('')
   setShowReview(false)
@@ -5295,9 +5937,10 @@ if (step === 0) {
               }}
             />
             {usernameError && (
-              <p style={{ color: '#c0392b', fontSize: fs(13), margin: 0 }}>{usernameError}</p>
+              <p style={{ color: 'var(--danger)', fontSize: fs(13), margin: 0 }}>{usernameError}</p>
             )}
             <button
+              className="onboarding-primary"
               style={{ ...styles.button, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               onClick={handleStartNewAccount}
               disabled={!username.trim()}
@@ -5411,7 +6054,7 @@ if (step === 4) {
             onChange={(e) => handleChange('placementAnswer', e.target.value)}
             disabled={isLoading}
           />
-          {placementError && <p style={{ margin: 0, color: '#c0392b', fontSize: fs(13) }}>{placementError}</p>}
+          {placementError && <p style={{ margin: 0, color: 'var(--danger)', fontSize: fs(13) }}>{placementError}</p>}
         </>
       ) : (
         <div style={onboardStyles.levelGrid}>
@@ -5477,7 +6120,7 @@ if (showReview) {
           <div key={m.id} style={styles.mistakeCard}>
             <div style={styles.mistakeCategory}>{m.category}</div>
             <div style={{ margin: '6px 0' }}>
-              <span style={{ color: '#c0392b', textDecoration: 'line-through' }}>{m.original_text}</span>
+              <span style={{ color: 'var(--danger)', textDecoration: 'line-through' }}>{m.original_text}</span>
               {' → '}
               <span style={{ color: '#27ae60', fontWeight: '600' }}>{m.corrected_text}</span>
             </div>
@@ -5558,6 +6201,7 @@ if (showVocab) {
       profileId={profileId}
       profile={profile}
       cefrLevel={placementResult?.level || 'A1'}
+      speechVoice={settings.speechVoice}
       onExit={() => setShowVocab(false)}
     />
   )
@@ -5569,7 +6213,47 @@ if (showVocab) {
         profileId={profileId}
         profile={profile}
         cefrLevel={placementResult?.level || 'A1'}
+        speechVoice={settings.speechVoice}
         onExit={() => setShowStructures(false)}
+      />
+    )
+  }
+
+  if (focusedPractice) {
+    return (
+      <AdaptiveQuizScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={placementResult?.level || 'A1'}
+        count={8}
+        targetSkill={focusedPractice.skill}
+        targetFocus={focusedPractice.focus}
+        onExit={() => setFocusedPractice(null)}
+      />
+    )
+  }
+
+  if (showAssessment) {
+    return (
+      <QuizScreen
+        profileId={profileId}
+        profile={profile}
+        cefrLevel={placementResult?.level || 'A1'}
+        label="Bài đánh giá tổng quát"
+        count={15}
+        attemptMode="assessment"
+        previousAssessment={assessmentBaseline}
+        onPracticeWeakness={(skill, focus) => {
+          setShowAssessment(false)
+          setFocusedPractice({ skill, focus })
+        }}
+        loader={() => window.api.generateAssessmentQuiz({
+          profileId,
+          targetLanguage: profile.targetLanguage,
+          nativeLanguage: profile.nativeLanguage,
+          cefrLevel: placementResult?.level || 'A1'
+        })}
+        onExit={() => setShowAssessment(false)}
       />
     )
   }
@@ -5580,6 +6264,11 @@ if (showVocab) {
         profileId={profileId}
         profile={profile}
         onExit={() => setShowProgress(false)}
+        onStartAssessment={(attempt) => {
+          setAssessmentBaseline(attempt)
+          setShowAssessment(true)
+        }}
+        onStartFocusedPractice={(skill, focus) => setFocusedPractice({ skill, focus })}
       />
     )
   }
@@ -5600,8 +6289,187 @@ if (showPractice) {
     />
   )
 }
+
+if (showVoiceChat) {
+  return (
+    <div className="app-shell voice-chat-screen">
+      <main className="voice-chat-layout">
+        <header className="voice-chat-topbar">
+          <button className="voice-back-button" onClick={() => { stopVoicePractice(); setShowVoiceChat(false) }}>
+            <Icon name="back" size={16} /> <span>Quay lại</span>
+          </button>
+          <div className="voice-top-title">
+            <span>HỘI THOẠI BẰNG GIỌNG NÓI</span>
+            <h1>{activeVoiceScenarioTitle || 'Nói chuyện tự nhiên'}</h1>
+          </div>
+          <div className="voice-language-pill"><span className="voice-language-dot" />{profile.targetLanguage || 'Trò chuyện bằng giọng nói'}</div>
+        </header>
+
+        <section ref={setChatBox} className="voice-transcript voice-transcript-center" role="log" aria-live="polite" aria-label="Phụ đề cuộc trò chuyện">
+          {voiceChatHistory.slice(-6).map((msg, index) => (
+            <div key={`${voiceChatHistory.length - 6 + index}-${msg.role}`} className={`voice-message ${msg.role === 'user' ? 'voice-message-user' : 'voice-message-ai'}`}>
+              <div className="voice-message-avatar">{msg.role === 'user' ? (username?.slice(0, 1).toUpperCase() || 'B') : 'AI'}</div>
+              <div className="voice-message-content">
+                <div className="voice-message-label">{msg.role === 'user' ? 'Bạn' : 'AI'}</div>
+                <div className="voice-message-text">{formatMessage(msg.text)}</div>
+              </div>
+            </div>
+          ))}
+          {voiceMode && (voiceInput.listening || voiceLiveTranscript || voicePendingTranscript || voiceInput.transcribing || voiceInput.error) && <div className="voice-live-caption" role="status" aria-live="polite">
+            {voiceInput.error && !voicePendingTranscript ? <>
+              <div className="voice-live-caption-heading"><span className="voice-live-dot" style={{ background: 'var(--danger)', boxShadow: 'none', animation: 'none' }} /> NHẬN DIỆN ĐANG GẶP LỖI</div>
+              <div className="voice-live-caption-text">{speechErrorMessage(voiceInput.error)}</div>
+              <div className="voice-review-actions">
+                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript}>
+                  <Icon name="mic" size={14} /> Thử lại
+                </button>
+              </div>
+              <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px' }}>
+                Nhận diện bằng Whisper cục bộ
+              </div>
+            </> : voiceInput.transcribing ? <>
+              <div className="voice-live-caption-heading"><span className="voice-live-dot" /> ĐANG NHẬN DIỆN CỤC BỘ</div>
+              <div className="voice-live-caption-text">
+                {voiceInput.modelProgress?.status === 'progress' && Number.isFinite(voiceInput.modelProgress.progress)
+                  ? `Đang tải mô hình lần đầu · ${Math.round(voiceInput.modelProgress.progress)}%`
+                  : 'Đang xử lý giọng nói trên thiết bị…'}
+              </div>
+            </> : voicePendingTranscript ? <>
+              <div className="voice-live-caption-heading"><span className="voice-live-dot" /> KIỂM TRA LỜI NHẬN DIỆN</div>
+              <textarea
+                className="voice-review-input"
+                aria-label="Sửa câu nhận diện trước khi gửi"
+                value={voicePendingTranscript}
+                onChange={(event) => {
+                  setVoicePendingTranscript(event.target.value)
+                  setVoiceLiveTranscript(event.target.value)
+                }}
+                rows={2}
+              />
+              <div className="voice-review-actions">
+                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript}>
+                  <Icon name="mic" size={14} /> Nói lại
+                </button>
+                <button type="button" className="voice-review-send" onClick={sendVoiceTranscript} disabled={!voicePendingTranscript.trim() || isChatLoading}>
+                  Gửi cho AI{autoSendVoice && voiceAutoSendCountdown > 0 ? ` · ${voiceAutoSendCountdown}s` : ''}
+                </button>
+              </div>
+              <label className="voice-auto-send-option">
+                <input type="checkbox" checked={autoSendVoice} onChange={(event) => toggleVoiceAutoSend(event.target.checked)} />
+                Tự gửi sau 5 giây
+              </label>
+              <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px' }}>
+                Nhận diện bằng Whisper cục bộ
+              </div>
+            </> : <>
+              <div className="voice-live-caption-heading"><span className="voice-live-dot" /> {voiceSpeechDetected || voiceLiveTranscript ? 'ĐÃ NHẬN ĐƯỢC GIỌNG NÓI' : 'ĐANG CHỜ GIỌNG NÓI'}</div>
+              <div className="voice-live-caption-text">{voiceLiveTranscript || 'Nói xong một câu, phần nhận diện sẽ hiện ở đây.'}</div>
+              <div style={{ marginTop: '8px', color: 'var(--text-muted)', fontSize: '11px' }}>
+                Nhận diện bằng Whisper cục bộ
+              </div>
+            </>}
+          </div>}
+          {isChatLoading && <div className="voice-thinking"><span /><span /><span /> AI đang suy nghĩ</div>}
+          {!voiceChatHistory.length && !isChatLoading && !voiceMode && (
+            <div className="voice-mode-picker">
+              <div className="voice-mode-picker-kicker">CHỌN CÁCH LUYỆN NÓI</div>
+              <h2>Bạn muốn trò chuyện thế nào?</h2>
+              <div className="voice-mode-tabs" role="tablist" aria-label="Chế độ luyện nói">
+                <button type="button" role="tab" aria-selected={voiceChatMode === 'free'} className={voiceChatMode === 'free' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('free'); setVoiceError('') }}>Tự do</button>
+                <button type="button" role="tab" aria-selected={voiceChatMode === 'scenario'} className={voiceChatMode === 'scenario' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('scenario'); setVoiceError('') }}>Tình huống có sẵn</button>
+                <button type="button" role="tab" aria-selected={voiceChatMode === 'custom'} className={voiceChatMode === 'custom' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('custom'); setVoiceError('') }}>Tạo tình huống</button>
+              </div>
+
+              {voiceChatMode === 'free' && <div className="voice-mode-detail">
+                <strong>Trò chuyện tự do</strong>
+                <span>Nói về bất cứ điều gì. AI sẽ bắt chuyện tự nhiên và phản hồi ngắn gọn.</span>
+              </div>}
+
+              {voiceChatMode === 'scenario' && <div className="voice-scenario-grid">
+                {voiceRoleplayScenarios.map((scenario) => (
+                  <button
+                    type="button"
+                    key={scenario.id}
+                    className={selectedVoiceScenario === scenario.id ? 'voice-scenario-card selected' : 'voice-scenario-card'}
+                    aria-pressed={selectedVoiceScenario === scenario.id}
+                    onClick={() => { setSelectedVoiceScenario(scenario.id); setVoiceError('') }}
+                  >
+                    <span className="voice-scenario-icon" aria-hidden="true">{scenario.icon}</span>
+                    <span className="voice-scenario-copy"><strong>{scenario.title}</strong><small>{scenario.description}</small></span>
+                  </button>
+                ))}
+              </div>}
+
+              {voiceChatMode === 'custom' && <div className="voice-custom-scenario">
+                <label htmlFor="voice-custom-scenario-input">Mô tả tình huống bạn muốn luyện</label>
+                <textarea
+                  id="voice-custom-scenario-input"
+                  value={customVoiceScenario}
+                  onChange={(event) => { setCustomVoiceScenario(event.target.value); setVoiceError('') }}
+                  maxLength={500}
+                  placeholder="Ví dụ: Tôi đang ở sân bay và cần hỏi nhân viên về cổng lên máy bay."
+                  rows={3}
+                />
+                <small>AI sẽ vào vai người đối thoại và bắt đầu bằng một câu hỏi.</small>
+              </div>}
+
+              <button type="button" className="voice-mode-start" onClick={startVoiceChatSession} disabled={!voiceInput.supported || (voiceChatMode === 'custom' && !customVoiceScenario.trim())}>
+                {voiceChatMode === 'free' ? 'Bắt đầu trò chuyện' : 'Bắt đầu tình huống'}
+                <Icon name="next" size={15} />
+              </button>
+            </div>
+          )}
+          {!voiceChatHistory.length && !isChatLoading && voiceMode && (
+            <div className="voice-empty-state">
+              <div className="voice-empty-icon"><Icon name="speaker" size={22} /></div>
+              <strong>Cuộc trò chuyện sẽ hiện ở đây</strong>
+              <span>Nói một điều bạn muốn chia sẻ để bắt đầu.</span>
+            </div>
+          )}
+        </section>
+
+        <footer className="voice-controls">
+          <p>Nói bằng {profile.targetLanguage || 'tiếng Anh'} · AI sẽ chỉ đọc bằng ngôn ngữ này</p>
+          <button
+            type="button"
+            className={`voice-mic-button ${voiceMode ? 'voice-mic-button-active' : ''} ${voiceInput.listening ? 'voice-mic-button-listening' : ''}`}
+            onClick={voiceMode ? toggleVoicePractice : startVoiceChatSession}
+            disabled={!voiceInput.supported}
+            aria-pressed={voiceMode}
+            aria-label={voiceMode ? 'Kết thúc trò chuyện bằng giọng nói' : 'Bắt đầu trò chuyện bằng giọng nói'}
+            title={voiceMode ? 'Dừng trò chuyện' : 'Bắt đầu theo chế độ đã chọn'}
+          >
+            <span className="voice-mic-halo" />
+            <span className="voice-mic-core"><Icon name={voiceMode && !voiceInput.error ? 'close' : 'mic'} size={24} /></span>
+          </button>
+          <div className={`voice-state-pill ${voiceInput.listening ? 'voice-state-pill-live' : ''}`} role="status" aria-live="polite">
+            <span className="voice-state-indicator" aria-hidden="true" />
+            <span>{!voiceInput.supported
+              ? 'Thiết bị này không hỗ trợ micro.'
+              : voiceError || (voiceInput.error
+                ? speechErrorMessage(voiceInput.error)
+                : voicePendingTranscript
+                  ? 'Đã nhận diện giọng nói. Kiểm tra nội dung rồi chọn Gửi cho AI hoặc Nói lại.'
+                  : voiceInput.transcribing
+                    ? (voiceInput.modelProgress?.status === 'progress' && Number.isFinite(voiceInput.modelProgress.progress)
+                      ? `Đang tải mô hình nhận diện lần đầu · ${Math.round(voiceInput.modelProgress.progress)}%`
+                      : 'Đang nhận diện giọng nói trên thiết bị…')
+                  : isChatLoading || isVoiceSpeaking
+                    ? 'AI đang trả lời…'
+                    : voiceInput.listening
+                      ? voiceSpeechDetected || voiceLiveTranscript
+                        ? 'Đã nhận được giọng nói · đang nhận diện thành chữ…'
+                        : 'Micro đang nghe · chưa phát hiện giọng nói.'
+                      : voiceMode ? 'Đang bật micro…' : 'Chọn cách luyện nói ở phía trên.')}</span>
+          </div>
+        </footer>
+      </main>
+    </div>
+  )
+}
+
 return (
-  <div style={styles.appLayout} className="fade-in" key={step}>
+  <div style={styles.appLayout} className="app-shell fade-in" key={step}>
     <style>{fadeStyle}</style>
     <style>{layoutCss}</style>
     <style>{sidebarCss}</style>
@@ -5736,25 +6604,28 @@ return (
     )}
     {/* Sidebar trái */}
         <aside className="sidebar" style={styles.sidebarV2}>
-      <button style={styles.newChatButton} onClick={handleNewConversation}>
+      <button className="new-chat-button" style={styles.newChatButton} onClick={handleNewConversation}>
         <Icon name="plus" size={16} /> Đoạn chat mới
       </button>
 
-      <nav style={styles.navList}>
+      <nav className="nav-list" style={styles.navList}>
         <button className="nav-item" style={styles.navItem} onClick={handleOpenReview}>
           <Icon name="book" size={17} /> Sổ tay lỗi sai
         </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => setShowPractice(true)}>
+        <button className="nav-item" style={{ ...styles.navItem, ...(showVoiceChat ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : {}) }} onClick={() => { stopVoicePractice(); setVoiceChatHistory([]); setVoiceChatMode('free'); setActiveVoiceScenarioPrompt(''); setActiveVoiceScenarioTitle(''); setVoiceError(''); setShowVoiceChat(true) }}>
+          <Icon name="mic" size={17} /> Trò chuyện bằng giọng nói
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowPractice(true) }}>
           <Icon name="repeat" size={17} /> <span style={{ flex: 1, textAlign: 'left' }}>Ôn tập</span>
           {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
         </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => setShowVocab(true)}>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowVocab(true) }}>
           <Icon name="cards" size={17} /> Từ vựng
         </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => setShowStructures(true)}>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowStructures(true) }}>
           <Icon name="layers" size={17} /> Cấu trúc câu
         </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => setShowProgress(true)}>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowProgress(true) }}>
           <Icon name="trend" size={17} /> Tiến bộ
         </button>
         <button className="nav-item" style={styles.navItem} onClick={handleOpenNotes}>
@@ -5762,17 +6633,17 @@ return (
         </button>
       </nav>
 
-      <div style={styles.convSectionV2}>
+      <div className="conversation-list" style={styles.convSectionV2}>
         {conversations.length > 0 && <div style={styles.sectionLabel}>Đoạn chat</div>}
         {conversations.map((c) => (
           <div
             key={c.id}
-            className="conv-item"
+            className={`conv-item ${c.id === currentConversationId ? 'conv-item-active' : ''}`}
             style={{
               ...styles.convItem,
               ...(c.id === currentConversationId ? styles.convItemActive : {})
             }}
-            onClick={() => switchConversation(c.id)}
+            onClick={() => { stopVoicePractice(); switchConversation(c.id) }}
           >
             <span style={styles.convTitle}>{c.title || 'Đoạn chat mới'}</span>
             <button
@@ -5797,6 +6668,7 @@ return (
                 style={styles.navItem}
                 onClick={() => {
                   setShowProfileMenu(false)
+                  stopVoicePractice()
                   onOpenSettings && onOpenSettings()
                 }}
               >
@@ -5828,7 +6700,7 @@ return (
           style={styles.profileBar}
           onClick={() => setShowProfileMenu((v) => !v)}
         >
-          <span style={styles.profileAvatarSmall}>
+          <span className="profile-avatar-small" style={styles.profileAvatarSmall}>
             {username ? username.charAt(0).toUpperCase() : '?'}
           </span>
           <span style={styles.profileInfo}>
@@ -5842,9 +6714,9 @@ return (
     </aside>
 
     {/* Khu vực chat giữa */}
-    <main style={styles.mainArea}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
-        <h2 style={{ ...styles.question, fontSize: fs(26) }}>Luyện tập cùng AI</h2>
+    <main style={styles.mainArea} className="chat-main">
+            <div className="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <h2 className="chat-title" style={{ ...styles.question, fontSize: fs(26) }}>Luyện tập cùng AI</h2>
         <div style={onboardStyles.levelBar}>
           <button
             style={{ ...onboardStyles.levelStep, ...(placementResult?.level === 'A1' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
@@ -5867,13 +6739,13 @@ return (
         </div>
       </div>
 
-      <div ref={setChatBox} style={styles.chatBoxFull}>
+      <div ref={setChatBox} style={styles.chatBoxFull} className="chat-transcript">
         {chatHistory.length === 0 && !isChatLoading && (
-          <div style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
+          <div className="chat-empty-state" style={{ margin: 'auto', textAlign: 'center', color: 'var(--text-muted)' }}>
             <p style={{ marginBottom: '14px' }}>Bắt đầu cuộc trò chuyện — thử một gợi ý:</p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center' }}>
               {chatSuggestions.map((s) => (
-                <button key={s} style={styles.suggestionChip} onClick={() => setChatInput(s)}>
+                <button key={s} className="suggestion-chip" style={styles.suggestionChip} onClick={() => setChatInput(s)}>
                   {s}
                 </button>
               ))}
@@ -5887,25 +6759,48 @@ return (
     style={{
       display: 'flex',
       flexDirection: 'column',
+      width: '100%',
+      maxWidth: '100%',
+      boxSizing: 'border-box',
       gap: '6px',
       alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start'
     }}
   >
-       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px' }}>
+       <div
+         style={{
+           display: 'flex',
+           width: '100%',
+           justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+           alignItems: 'flex-end',
+           gap: '6px'
+         }}
+       >
       {msg.role === 'model' && (
         <button
           style={styles.speakButton}
-          onClick={() => speakText(msg.text, speechLang)}
+          onClick={() => {
+            if (!voiceModeRef.current) {
+              speakNaturalText(msg.text, speechLang, undefined, settings.speechVoice)
+              return
+            }
+            speechControlRef.current?.stop()
+            setIsVoiceSpeaking(true)
+            speakNaturalText(msg.text, speechLang, () => {
+              setIsVoiceSpeaking(false)
+              scheduleVoiceRestart()
+            }, settings.speechVoice)
+          }}
           title="Nghe đọc"
         >
           <Icon name="speaker" size={14} />
         </button>
       )}
       <div
+        className={`chat-bubble ${msg.role === 'user' ? 'chat-bubble-user' : 'chat-bubble-ai'}`}
         style={{
           ...styles.chatBubble,
-          background: msg.role === 'user' ? 'var(--bubble-user-bg)' : 'var(--bubble-ai-bg)',
-          color: msg.role === 'user' ? 'var(--bubble-user-text)' : 'var(--text)'
+          background: 'var(--bubble-ai-bg)',
+          color: 'var(--text)'
         }}
       >
         {formatMessage(msg.text)}
@@ -5929,8 +6824,9 @@ return (
         {isChatLoading && <TypingIndicator />}
       </div>
 
-           <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
+           <div className="chat-composer" style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
         <input
+          className="chat-input"
           style={{ ...styles.input, width: '100%' }}
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
@@ -5938,7 +6834,8 @@ return (
           placeholder="Nhập tin nhắn..."
           disabled={isChatLoading}
         />
-         <button
+        <button
+    className="chat-send"
     style={{
       ...styles.sendButton,
       ...(isChatLoading || !chatInput.trim() ? { opacity: 0.4, cursor: 'not-allowed' } : {})
@@ -5950,7 +6847,7 @@ return (
   >
     <Icon name="send" size={20} />
   </button>
-</div> 
+</div>
     </main>
 
       {/* Panel thống kê phải */}
@@ -5975,7 +6872,7 @@ return (
         />
       ) : (
         <>
-          <div style={styles.statCard}>
+          <div className="stat-card" style={styles.statCard}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
               <Icon name="flame" size={18} />
               <span style={{ fontSize: fs(18), fontWeight: '700' }}>{dailyStats.streak}</span>
@@ -5994,12 +6891,12 @@ return (
             </div>
           </div>
 
-          <div style={styles.statCard}>
+          <div className="stat-card" style={styles.statCard}>
             <div style={{ fontSize: fs(32), fontWeight: '700', color: 'var(--accent)' }}>{mistakes.length}</div>
             <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>lỗi đã ghi nhận</div>
           </div>
 
-          <div style={styles.statCard}>
+          <div className="stat-card" style={styles.statCard}>
             <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi hay gặp nhất</div>
             {categoryCounts.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
             {categoryCounts.map(([cat, count]) => (
@@ -6010,12 +6907,12 @@ return (
             ))}
           </div>
 
-          <div style={styles.statCard}>
+          <div className="stat-card" style={styles.statCard}>
             <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '8px' }}>Lỗi gần đây</div>
             {mistakes.length === 0 && <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Chưa có lỗi nào</div>}
             {mistakes.slice(0, 3).map((m) => (
               <div key={m.id} style={{ fontSize: fs(13), marginBottom: '8px' }}>
-                <span style={{ color: '#c0392b', textDecoration: 'line-through' }}>{m.original_text}</span>
+                <span style={{ color: 'var(--danger)', textDecoration: 'line-through' }}>{m.original_text}</span>
                 {' → '}
                 <span style={{ color: '#27ae60', fontWeight: '600' }}>{m.corrected_text}</span>
               </div>
@@ -6108,7 +7005,7 @@ const styles = {
     borderRadius: '999px',
     border: 'none',
     background: 'var(--accent)',
-    color: '#ffffff',
+    color: 'var(--btn-text)',
     cursor: 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
@@ -6134,7 +7031,7 @@ const styles = {
     borderRadius: '16px',
     maxWidth: '75%',
     fontSize: fs(15),
-    textAlign: 'left'
+    textAlign: 'center'
   },
   reviewBox: {
     width: '500px',
@@ -6193,8 +7090,8 @@ const styles = {
     width: '72px',
     height: '72px',
     borderRadius: '50%',
-    background: '#6366f1',
-    color: '#ffffff',
+    background: 'var(--accent)',
+    color: 'var(--btn-text)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -6293,7 +7190,7 @@ const styles = {
     height: '22px',
     padding: '0 7px',
     borderRadius: '999px',
-    background: '#ef4444',
+    background: '#c0392b',
     color: '#ffffff',
     fontSize: '12px',
     fontWeight: '700',
@@ -6308,7 +7205,7 @@ const styles = {
     fontWeight: '700',
     borderRadius: '999px',
     border: 'none',
-    background: '#ef4444',
+    background: '#c0392b',
     color: '#ffffff',
     cursor: 'pointer'
   },
@@ -6319,7 +7216,7 @@ const styles = {
     borderRadius: '50%',
     border: 'none',
     background: 'var(--accent)',
-    color: '#ffffff',
+    color: 'var(--btn-text)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
@@ -6426,7 +7323,7 @@ const styles = {
     height: '38px',
     borderRadius: '50%',
     background: 'var(--accent)',
-    color: '#ffffff',
+    color: 'var(--btn-text)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -6519,8 +7416,8 @@ const styles = {
     width: '32px',
     height: '32px',
     borderRadius: '50%',
-    background: '#6366f1',
-    color: '#ffffff',
+    background: 'var(--accent)',
+    color: 'var(--btn-text)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -6719,7 +7616,7 @@ const settingsStyles = {
   optionActive: {
     background: 'var(--accent)',
     borderColor: 'var(--accent)',
-    color: '#ffffff'
+    color: 'var(--btn-text)'
   },
   preview: {
     marginTop: '12px',
@@ -6834,9 +7731,127 @@ function ToggleSwitch({ checked, onChange }) {
 }
 
 
-function SettingsModal({ settings, onChange, onClose }) {
+function MicrophoneTest() {
+  const [active, setActive] = useState(false)
+  const [level, setLevel] = useState(0)
+  const [message, setMessage] = useState('')
+  const streamRef = useRef(null)
+  const contextRef = useRef(null)
+  const frameRef = useRef(null)
+
+  const stop = useCallback(() => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current)
+    frameRef.current = null
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    streamRef.current = null
+    contextRef.current?.close().catch(() => {})
+    contextRef.current = null
+    setActive(false)
+    setLevel(0)
+  }, [])
+
+  useEffect(() => () => {
+    if (frameRef.current != null) cancelAnimationFrame(frameRef.current)
+    streamRef.current?.getTracks().forEach((track) => track.stop())
+    contextRef.current?.close().catch(() => {})
+  }, [])
+
+  const start = async () => {
+    setMessage('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const AudioContext = window.AudioContext || window.webkitAudioContext
+      const context = new AudioContext()
+      contextRef.current = context
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 512
+      context.createMediaStreamSource(stream).connect(analyser)
+      const samples = new Uint8Array(analyser.fftSize)
+      setActive(true)
+      const measure = () => {
+        analyser.getByteTimeDomainData(samples)
+        const rms = Math.sqrt(samples.reduce((sum, value) => sum + ((value - 128) / 128) ** 2, 0) / samples.length)
+        setLevel(Math.min(100, Math.round(rms * 500)))
+        frameRef.current = requestAnimationFrame(measure)
+      }
+      measure()
+    } catch (error) {
+      setMessage(error?.name === 'NotAllowedError'
+        ? 'Hãy cho phép ứng dụng truy cập micro trong cài đặt quyền của Windows.'
+        : 'Không tìm thấy micro hoặc không thể mở thiết bị âm thanh.')
+      stop()
+    }
+  }
+
   return (
-    <div style={settingsStyles.overlay} onClick={onClose}>
+    <div style={{ ...rowStyles.row, alignItems: 'flex-start', flexDirection: 'column', gap: '10px' }}>
+      <div style={rowStyles.textCol}>
+        <div style={rowStyles.title}>Kiểm tra micro</div>
+        <div style={rowStyles.desc}>Nói thử để xem ứng dụng có nhận được âm thanh từ micro không.</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
+        <button
+          type="button"
+          onClick={active ? stop : start}
+          style={{ ...notesStyles.primaryBtn, padding: '8px 14px' }}
+        >
+          {active ? 'Dừng kiểm tra' : 'Bắt đầu kiểm tra'}
+        </button>
+        <div style={{ flex: 1, height: '9px', borderRadius: '999px', background: 'var(--border-soft)', overflow: 'hidden' }}>
+          <div style={{ width: `${level}%`, height: '100%', borderRadius: 'inherit', background: 'var(--accent)', transition: 'width 80ms linear' }} />
+        </div>
+      </div>
+      <div role="status" aria-live="polite" style={{ ...rowStyles.desc, color: message ? 'var(--warn-text)' : 'var(--text-muted)' }}>
+        {message || (active ? (level > 2 ? 'Micro đang nhận âm thanh.' : 'Đang mở micro… hãy nói thử.') : '')}
+      </div>
+    </div>
+  )
+}
+
+function SettingsModal({ settings, onChange, onClose, profileId }) {
+  const [confirmClearMemory, setConfirmClearMemory] = useState(false)
+  const [clearingMemory, setClearingMemory] = useState(false)
+  const [memoryMessage, setMemoryMessage] = useState('')
+  const [voicePreview, setVoicePreview] = useState('')
+
+  const previewVoice = async () => {
+    setVoicePreview('Đang tải và phát giọng AI Kokoro… lần đầu có thể mất một chút thời gian.')
+    const result = await previewKokoroVoice(
+      'Hi! It is nice to meet you. What would you like to talk about today?',
+      settings.speechVoice || 'af_heart',
+      () => setVoicePreview('Đã phát xong giọng AI Kokoro.')
+    )
+    if (!result.success && !result.cancelled) {
+      console.error('Kokoro voice preview failed:', result.error)
+      setVoicePreview(`Không phát được giọng AI Kokoro (${result.error}). Không dùng giọng TTS mặc định.`)
+    }
+  }
+
+  const clearMemory = async () => {
+    if (!profileId || clearingMemory) return
+    setClearingMemory(true)
+    setMemoryMessage('')
+    try {
+      const current = await window.api.getLearnerNotes({ profileId })
+      const result = await window.api.saveLearnerNotes({
+        profileId,
+        notes: '',
+        enabled: current.enabled !== false
+      })
+      if (!result.success) throw new Error('Could not clear learner memory')
+      setMemoryMessage('Đã xoá bộ nhớ AI.')
+      setConfirmClearMemory(false)
+    } catch {
+      setMemoryMessage('Chưa xoá được bộ nhớ. Vui lòng thử lại.')
+    } finally {
+      setClearingMemory(false)
+    }
+  }
+
+  return (
+    <>
+      <div style={settingsStyles.overlay} onClick={onClose}>
       <div style={{ ...settingsStyles.modal, width: '520px' }} onClick={(e) => e.stopPropagation()}>
         <div style={{ ...settingsStyles.header, marginBottom: '4px' }}>
           <h3 style={{ margin: 0, fontSize: fs(20), fontWeight: '700' }}>Cài đặt</h3>
@@ -6887,8 +7902,67 @@ function SettingsModal({ settings, onChange, onClose }) {
             onChange={(v) => onChange({ showInlineMistakes: v })}
           />
         </div>
+        <div style={{ ...rowStyles.row, alignItems: 'flex-start' }}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Giọng nói AI</div>
+            <div style={rowStyles.desc}>Tạo giọng tiếng Anh tự nhiên ngay trên thiết bị. Tải model một lần khi dùng lần đầu.</div>
+            {voicePreview && <div role="status" style={{ ...rowStyles.desc, marginTop: 6 }}>{voicePreview}</div>}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 155 }}>
+            <select
+              aria-label="Chọn giọng nói AI"
+              value={settings.speechVoice || 'af_heart'}
+              onChange={(event) => onChange({ speechVoice: event.target.value })}
+              style={{ padding: '9px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: fs(13) }}
+            >
+              <option value="af_heart">Heart · Mỹ, nữ</option>
+              <option value="af_bella">Bella · Mỹ, nữ</option>
+              <option value="af_nicole">Nicole · Mỹ, nữ</option>
+              <option value="am_puck">Puck · Mỹ, nam</option>
+              <option value="am_michael">Michael · Mỹ, nam</option>
+              <option value="bf_emma">Emma · Anh, nữ</option>
+              <option value="bm_george">George · Anh, nam</option>
+            </select>
+            <button type="button" className="qghost" style={{ ...quizStyles.ghost, padding: '8px 12px', fontSize: fs(13) }} onClick={previewVoice}>
+              Nghe thử giọng
+            </button>
+          </div>
+        </div>
+        <MicrophoneTest />
+        <div style={{ ...rowStyles.row, ...rowStyles.rowLast, alignItems: 'flex-start' }}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Bộ nhớ AI</div>
+            <div style={rowStyles.desc}>Xoá ghi chú AI đã lưu về bạn. Lịch sử tin nhắn sẽ không bị xoá.</div>
+            {memoryMessage && <div role="status" style={{ ...rowStyles.desc, color: 'var(--text)' }}>{memoryMessage}</div>}
+          </div>
+          <button
+            type="button"
+            style={{ ...styles.dangerButton, padding: '8px 14px', fontSize: fs(13), flexShrink: 0, opacity: !profileId || clearingMemory ? 0.55 : 1 }}
+            onClick={() => setConfirmClearMemory(true)}
+            disabled={!profileId || clearingMemory}
+          >
+            <Icon name="trash" size={14} /> Xoá bộ nhớ
+          </button>
+        </div>
       </div>
-    </div>
+      </div>
+      {confirmClearMemory && (
+        <div style={{ ...settingsStyles.overlay, zIndex: 2100 }} onClick={() => !clearingMemory && setConfirmClearMemory(false)}>
+          <div style={{ ...settingsStyles.modal, width: '380px' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 10px', fontSize: fs(18), fontWeight: '700' }}>Xoá bộ nhớ AI?</h3>
+            <p style={{ margin: '0 0 20px', fontSize: fs(13), color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Ghi chú cá nhân AI đã lưu sẽ bị xoá. Tin nhắn và lịch sử trò chuyện vẫn được giữ.
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button className="qghost" style={quizStyles.ghost} onClick={() => setConfirmClearMemory(false)} disabled={clearingMemory}>Huỷ</button>
+              <button style={styles.dangerButton} onClick={clearMemory} disabled={clearingMemory}>
+                {clearingMemory ? 'Đang xoá...' : 'Xoá bộ nhớ'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
 
@@ -6896,12 +7970,15 @@ function App() {
   const [settings, setSettings] = useState(loadSettings)
   const [showSettings, setShowSettings] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
+  const [activeProfileId, setActiveProfileId] = useState(null)
   useLayoutEffect(() => {
     const apply = () => {
       const isDark =
         settings.theme === 'dark' ||
         (settings.theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
       const root = document.documentElement
+      root.dataset.theme = isDark ? 'dark' : 'light'
+      root.style.colorScheme = isDark ? 'dark' : 'light'
       Object.entries(isDark ? themes.dark : themes.light).forEach(([k, v]) =>
         root.style.setProperty(k, v)
       )
@@ -6931,6 +8008,7 @@ function App() {
         settings={settings}
         onOpenSettings={() => setShowSettings(true)}
         onLoggedInChange={setLoggedIn}
+        onActiveProfileChange={setActiveProfileId}
       />
       {!loggedIn && (
         <button
@@ -6946,6 +8024,7 @@ function App() {
           settings={settings}
           onChange={updateSettings}
           onClose={() => setShowSettings(false)}
+          profileId={activeProfileId}
         />
       )}
     </>

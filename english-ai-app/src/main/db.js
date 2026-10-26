@@ -107,6 +107,7 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('skill_events', 'focus', 'TEXT')
 db.exec(`
   CREATE TABLE IF NOT EXISTS quiz_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
