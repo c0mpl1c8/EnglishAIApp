@@ -271,6 +271,18 @@ const LEVEL_PROFILES = {
 const getProfile = (level) => LEVEL_PROFILES[level] || LEVEL_PROFILES.A1
 const LEVELS = Object.keys(LEVEL_PROFILES)
 
+function nextAssessmentLevel(profileId) {
+  const profile = db.prepare('SELECT cefr_level FROM profile WHERE id = ?').get(profileId)
+  const current = LEVELS.includes(profile?.cefr_level) ? profile.cefr_level : 'A1'
+  const latest = db.prepare("SELECT correct, total, details FROM quiz_attempts WHERE profile_id = ? AND mode = 'assessment' ORDER BY id DESC LIMIT 1").get(profileId)
+  if (!latest) return current
+  let testedLevel
+  try { testedLevel = JSON.parse(latest.details)?.[0]?.assessmentLevel } catch { /* Older results have no level metadata. */ }
+  if (!LEVELS.includes(testedLevel) || LEVELS.indexOf(testedLevel) < LEVELS.indexOf(current)) return current
+  if (latest.correct / latest.total >= 0.9 && testedLevel === current) return LEVELS[LEVELS.indexOf(current) + 1] || current
+  return testedLevel
+}
+
 // Ký tự có dấu đặc trưng của tiếng Việt (tiếng Anh và các ngôn ngữ Latin khác không có đủ các dấu này)
 const VI_CHARS = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i
 
@@ -344,19 +356,17 @@ function recordLearningEvent({ profileId, skill, correct, source = 'quiz', quest
 }
 const ASSESSMENT_BLUEPRINT = [
   ...[
-    'tense', 'agreement', 'article', 'vocabulary', 'preposition',
-    'tense', 'agreement', 'structure', 'vocabulary', 'word_order',
-    'spelling', 'article', 'preposition', 'structure', 'vocabulary'
-  ].map((skill) => ({ skill, difficulty: 'easy', section: 'Ngữ pháp và từ vựng nền tảng' })),
+    'tense', 'agreement', 'article', 'structure', 'vocabulary',
+    'preposition', 'word_order', 'tense', 'agreement', 'structure',
+    'vocabulary', 'article', 'preposition', 'word_order', 'structure'
+  ].map((skill) => ({ skill, difficulty: 'easy' })),
   ...[
-    'tense', 'agreement', 'article', 'vocabulary', 'preposition',
-    'structure', 'word_order', 'tense', 'agreement', 'article',
-    'vocabulary', 'preposition', 'structure', 'word_order', 'spelling'
-  ].map((skill, index) => ({
-    skill,
-    difficulty: index < 10 ? 'medium' : 'hard',
-    section: index < 5 ? 'Đọc điền từ' : index < 10 ? 'Đọc hiểu' : 'Đọc hiểu nâng cao'
-  }))
+    'tense', 'agreement', 'structure', 'vocabulary', 'preposition',
+    'word_order', 'article', 'structure', 'tense', 'vocabulary'
+  ].map((skill) => ({ skill, difficulty: 'medium' })),
+  ...['tense', 'agreement', 'article', 'vocabulary', 'preposition'].map((skill) => ({ skill, difficulty: 'medium' })),
+  ...['vocabulary', 'structure', 'word_order', 'tense', 'preposition'].map((skill) => ({ skill, difficulty: 'medium' })),
+  ...['structure', 'vocabulary', 'tense', 'word_order', 'agreement'].map((skill) => ({ skill, difficulty: 'hard' }))
 ]
 
 // Thứ tự kiểm tra quan trọng: "chủ ngữ sai vị trí" là trật tự từ, nên kiểm tra trước "chủ ngữ"
@@ -816,10 +826,26 @@ function buildProgress(profileId) {
         total: item.total,
         correct: item.correct,
         focus: focus?.focus || item.label,
+        weakFocuses: [...item.focuses.values()]
+          .filter((entry) => entry.correct < entry.total)
+          .sort((a, b) => a.correct / a.total - b.correct / b.total || b.total - a.total),
         status: item.total < 2 ? 'limited' : ratio <= 0.5 ? 'practice' : 'monitor'
       }
     })
-    return { ...attempt, signals }
+    const incorrectQuestions = items
+      .map((item, index) => ({ ...item, number: index + 1 }))
+      .filter((item) => item.picked !== item.answer)
+      .map((item) => ({
+        number: item.number,
+        question: cleanText(item.question, 400),
+        passage: cleanText(item.passage, 2600),
+        focus: cleanText(item.focus, 80),
+        picked: item.picked,
+        answer: item.answer,
+        options: (Array.isArray(item.options) ? item.options : []).map((option) => cleanText(option, 200)),
+        explanation: cleanText(item.explanation, 400)
+      }))
+    return { ...attempt, signals, incorrectQuestions }
   })
 
   const dueFocusReviews = db.prepare(`
@@ -995,14 +1021,15 @@ app.whenReady().then(() => {
       return { success: false, error: localSpeechPipeline ? 'LOCAL_ASR_FAILED' : 'LOCAL_MODEL_DOWNLOAD_FAILED' }
     }
   })
-  ipcMain.handle('synthesize-speech-local', async (event, { text, voice }) => {
+  ipcMain.handle('synthesize-speech-local', async (event, { text, voice, speed = 1 }) => {
     try {
       const cleanText = String(text || '').replace(/\s+/g, ' ').trim()
       const allowedVoices = new Set(['af_heart', 'af_bella', 'af_nicole', 'am_puck', 'am_michael', 'bf_emma', 'bm_george'])
       if (!cleanText || cleanText.length > 1200) return { success: false, error: 'INVALID_TEXT' }
       const selectedVoice = allowedVoices.has(voice) ? voice : 'af_heart'
       const synthesizer = await getLocalSpeechSynthesizer(event.sender)
-      const result = await synthesizer.generate(cleanText, { voice: selectedVoice })
+      const speakingSpeed = Number.isFinite(Number(speed)) ? Math.min(1.1, Math.max(0.85, Number(speed))) : 1
+      const result = await synthesizer.generate(cleanText, { voice: selectedVoice, speed: speakingSpeed })
       return {
         success: true,
         audio: result.audio,
@@ -1150,8 +1177,11 @@ ${cleanText(voiceScenarioPrompt, 1200)}
       const voiceGrammarRules = grammarTitle ? `
 CHẾ ĐỘ LUYỆN NÓI MẪU CÂU (ưu tiên cao nhất trong phiên này):
 - Mẫu cần luyện: ${grammarTitle}. Công thức: ${grammarFormula}. Cách dùng: ${grammarUse}. Ví dụ: ${grammarExample}.
-- Tạo MỘT tình huống đời thường cụ thể phù hợp với cách dùng của mẫu (ví dụ gặp đồng nghiệp, gọi món, kể chuyện cuối tuần, lên kế hoạch chuyến đi). Người học có một vai và một mục đích rõ ràng trong tình huống đó. Không chỉ đọc câu mẫu rồi hỏi câu chung chung.
-- ${grammarOpening ? 'Lượt mở đầu gồm 3–4 câu ngắn: (1) đặt bối cảnh cụ thể bằng lời nói tự nhiên, (2) hướng dẫn khi nào cần dùng mẫu trong bối cảnh này, (3) làm mẫu một câu áp dụng, (4) hỏi MỘT câu để người học vào vai và trả lời bằng mẫu. Khoảng 35–60 từ; nói trực tiếp với người học, không dùng nhãn “Situation” hay tiêu đề.' : 'Tiếp tục CÙNG tình huống đã mở. Phản hồi nội dung người học rồi đưa bước tiếp theo trong tình huống; mỗi lượt 1–3 câu ngắn và tối đa một câu hỏi. Không quay lại lời mở đầu hoặc đổi sang câu hỏi chung chung.'}
+- Mỗi lượt phải tiếp tục luyện ĐÚNG mẫu “${grammarTitle}”. Không đổi sang chủ đề làm quen, hỏi nghề nghiệp, kể kế hoạch cuối tuần hoặc small talk nếu câu hỏi đó không yêu cầu người học dùng mẫu này.
+- Trước khi trả lời, xác định câu người học vừa nói có dùng đúng mẫu không. Nếu họ chỉ đáp một từ như “Yes”, hãy giải thích ngắn rằng cần nói một câu đầy đủ với mẫu, đưa một câu mẫu và hỏi lại một câu thật cụ thể.
+- Nếu mẫu là câu điều kiện loại 1, luôn giữ dạng if + hiện tại đơn, will + động từ nguyên mẫu. Mỗi câu hỏi luyện tập phải tạo cơ hội để người học trả lời theo dạng “If ..., I will ...”. Ví dụ: “What will you do if it rains tomorrow?”
+- Dùng các tình huống đời thường ngắn để luyện mẫu. Sau 1–2 lượt trả lời của người học, chuyển sang MỘT bối cảnh khác (ví dụ từ quán cà phê sang trường học, rồi đến chuyến đi), nhưng vẫn kiểm tra đúng mẫu “${grammarTitle}”.
+- ${grammarOpening ? 'Lượt mở đầu gồm 3–4 câu ngắn: giới thiệu mẫu, làm mẫu một câu và hỏi MỘT câu cụ thể để người học trả lời bằng mẫu.' : 'Phản hồi câu vừa nói, rồi nêu bối cảnh mới khi đã hỏi 1–2 câu trong bối cảnh cũ. Mỗi lượt 1–3 câu ngắn, tối đa một câu hỏi. Không hỏi lại cùng một câu hoặc chỉ thay một vài từ trong câu hỏi trước.'}
 - Nếu người học dùng mẫu chưa đúng, sửa ngắn gọn theo kiểu “Did you mean: ...?” rồi cho họ thử lại trong chính tình huống đó. Nếu đúng, đẩy tình huống tiến thêm một bước thực tế.
 - Nếu người học bí hoặc nói không biết trả lời, cho một câu gợi ý ngắn để họ có thể nói theo, rồi mời họ thử bằng ý của mình. Khi họ hỏi tại sao, giải thích cách dùng bằng một câu ngắn liên hệ với tình huống.
 - Trường "reply" chỉ bằng ${targetLanguage}, không markdown hay bản dịch; mistakes và newVocabulary luôn là [].
@@ -1206,7 +1236,7 @@ Luôn trả lời CHỈ bằng JSON theo đúng format sau, không thêm chữ n
 Nếu học viên KHÔNG mắc lỗi nào, để mảng "mistakes" rỗng: []. Tối đa 2 mục trong "newVocabulary" mỗi lượt, để rỗng nếu không có từ nào đặc biệt.
 ${voiceChat && grammarTitle ? `
 QUY TẮC CUỐI CÙNG CHO LUYỆN NÓI MẪU CÂU — ƯU TIÊN HƠN QUY TẮC GIA SƯ CHUNG:
-Luôn luyện mẫu “${grammarTitle}” trong MỘT tình huống thực tế nhất quán. ${grammarOpening ? 'Lượt đầu đặt bối cảnh, nói mục đích dùng mẫu, làm mẫu và mời người học trả lời; đủ 3–4 câu ngắn.' : 'Lượt sau tiếp tục tình huống, sửa cách dùng nếu cần rồi hỏi một câu tiến triển tự nhiên; tối đa 3 câu ngắn.'} Chỉ dùng ${targetLanguage}; không dịch hoặc liệt kê lý thuyết. mistakes và newVocabulary luôn là [].` : voiceChat ? `
+Luôn luyện mẫu “${grammarTitle}”. ${grammarOpening ? 'Lượt đầu giới thiệu rõ mẫu câu, làm mẫu và mời người học trả lời; đủ 3–4 câu ngắn.' : 'Lượt sau bám vào câu người học, đổi bối cảnh sau 1–2 lượt và yêu cầu dùng lại đúng mẫu. Không lặp câu hỏi trước hoặc chuyển sang small talk chung chung; tối đa 3 câu ngắn.'} Chỉ dùng ${targetLanguage}; không dịch hoặc liệt kê lý thuyết. mistakes và newVocabulary luôn là [].` : voiceChat ? `
 QUY TẮC CUỐI CÙNG CHO VOICE CHAT — ƯU TIÊN HƠN CÁC QUY TẮC GIA SƯ Ở TRÊN:
 Đây là cuộc trò chuyện đời thường bằng ${targetLanguage}, không phải bài học. Chỉ trả lời ${targetLanguage}, không thêm bản dịch. Hãy bắt nhịp tự nhiên và súc tích: thường một câu ngắn, tối đa hai câu khi cần. Nếu người dùng chỉ chào, trả lời bằng một lời chào quen thuộc như "Hi! How are you?" rồi dừng; tuyệt đối không tự thêm nhiều câu hỏi hoặc giới thiệu dài. Không định nghĩa từ, không liệt kê từ vựng, không dịch, không sửa lỗi, không nêu ví dụ, không yêu cầu luyện tập. Chỉ làm các việc đó nếu người dùng yêu cầu rõ ràng. mistakes và newVocabulary luôn là [].` : ''}`
 
@@ -1258,6 +1288,51 @@ QUY TẮC CUỐI CÙNG CHO VOICE CHAT — ƯU TIÊN HƠN CÁC QUY TẮC GIA SƯ 
             : `I can't write code here because I'm your ${targetLanguage} tutor, but I can help you talk about this topic. Try describing what you want to do!`
           parsed.mistakes = []
           parsed.newVocabulary = []
+        }
+      }
+      if (voiceChat && /câu điều kiện loại 1/i.test(grammarTitle) && !(/\bif\b/i.test(parsed.reply) && /\bwill\b/i.test(parsed.reply))) {
+        try {
+          const retry = await generateWithRetry({
+            model: 'gemini-3.6-flash',
+            contents: [
+              ...contents,
+              { role: 'model', parts: [{ text }] },
+              { role: 'user', parts: [{ text: 'Your reply lost the first conditional lesson. Reply in JSON with a short, helpful response to my last message, one correct example using “If + present simple, I will + verb”, and one specific question that makes me answer with that pattern. Stay on the first conditional.' }] }
+            ]
+          })
+          const corrected = JSON.parse(retry.text.replace(/```json|```/g, '').trim())
+          if (typeof corrected.reply === 'string' && /\bif\b/i.test(corrected.reply) && /\bwill\b/i.test(corrected.reply)) parsed = corrected
+        } catch (error) { logError('voice-structure-retry', error) }
+        if (!(/\bif\b/i.test(parsed.reply) && /\bwill\b/i.test(parsed.reply))) {
+          parsed.reply = "Let's stay with the first conditional. For example: 'If it rains tomorrow, I will stay home.' What will you do if it rains tomorrow?"
+        }
+      }
+      if (voiceChat && grammarTitle && Array.isArray(history)) {
+        const lastPartnerReply = [...history].reverse().find((turn) => turn?.role === 'model')?.text || ''
+        const lastQuestion = lastPartnerReply.match(/[^.!?]*\?/g)?.at(-1)?.trim().toLowerCase()
+        const newQuestion = parsed.reply.match(/[^.!?]*\?/g)?.at(-1)?.trim().toLowerCase()
+        if (lastQuestion && newQuestion && lastQuestion === newQuestion) {
+          try {
+            const retry = await generateWithRetry({
+              model: 'gemini-3.6-flash',
+              contents: [
+                ...contents,
+                { role: 'model', parts: [{ text }] },
+                { role: 'user', parts: [{ text: `Your question repeats the previous turn. Keep practicing ${grammarTitle}, but move to a new everyday setting and ask a different, specific question. Return the required JSON.` }] }
+              ]
+            })
+            const varied = JSON.parse(retry.text.replace(/```json|```/g, '').trim())
+            const variedQuestion = String(varied.reply || '').match(/[^.!?]*\?/g)?.at(-1)?.trim().toLowerCase()
+            if (variedQuestion && variedQuestion !== lastQuestion && (!/câu điều kiện loại 1/i.test(grammarTitle) || (/\bif\b/i.test(varied.reply) && /\bwill\b/i.test(varied.reply)))) parsed = varied
+          } catch (error) { logError('voice-structure-variety', error) }
+          const finalQuestion = parsed.reply.match(/[^.!?]*\?/g)?.at(-1)?.trim().toLowerCase()
+          if (finalQuestion === lastQuestion) {
+            parsed.reply = /câu điều kiện loại 1/i.test(grammarTitle)
+              ? 'Let’s try a new situation. What will you do if your train is late?'
+              : /hòa hợp chủ ngữ/i.test(grammarTitle)
+                ? 'Let’s change the scene to school. What does your friend do after class?'
+                : `Let’s try a new situation with the same pattern. For example: ${grammarExample} Can you make your own sentence?`
+          }
         }
       }
       const s = (v) => (v == null ? '' : String(v))
@@ -1390,7 +1465,21 @@ Quy tắc: Trả về chính xác một mục cho MỖI số #. Chỉ đánh d�
           reviews.push(...await evaluateBatch(batch))
         } catch (batchError) {
           // A small model may omit one item in a batch; retry each sentence so none is skipped.
-          for (const item of batch) reviews.push(...await evaluateBatch([item]))
+          for (const item of batch) {
+            try {
+              reviews.push(...await evaluateBatch([item]))
+            } catch (itemError) {
+              logError('voice-turn-review-item', itemError)
+              reviews.push({
+                index: item.index,
+                original: item.original,
+                corrected: item.original,
+                needsRepeat: false,
+                reviewUnavailable: true,
+                why: ''
+              })
+            }
+          }
         }
       }
       return { success: true, reviews }
@@ -1464,11 +1553,13 @@ Nguyên tắc:
       if (profileId) {
         const scores = result.feedback.scores
         const labels = { grammar: 'Ngữ pháp khi nói', naturalness: 'Diễn đạt tự nhiên khi nói', fluency: 'Độ trôi chảy qua transcript', interaction: 'Phản hồi theo ngữ cảnh' }
-        Object.entries(labels).forEach(([key, focus]) => {
-          if (Number.isFinite(scores[key])) recordLearningEvent({
-            profileId, skill: 'speaking', correct: scores[key] >= 3, source: 'speaking', focus, strategy: 'conversation-feedback'
+        db.transaction(() => {
+          Object.entries(labels).forEach(([key, focus]) => {
+            if (Number.isFinite(scores[key])) recordLearningEvent({
+              profileId, skill: 'speaking', correct: scores[key] >= 3, source: 'speaking', focus, strategy: 'conversation-feedback'
+            })
           })
-        })
+        })()
       }
       return result
     } catch (error) {
@@ -2055,7 +2146,7 @@ Quy tắc:
   ipcMain.handle('record-skill-event', async (event, { profileId, skill, correct, source, question, focus, difficulty, strategy }) => {
     try {
       if (!SKILL_IDS.includes(skill)) return { success: false }
-      recordLearningEvent({ profileId, skill, correct, source, question, focus, difficulty, strategy })
+      db.transaction(() => recordLearningEvent({ profileId, skill, correct, source, question, focus, difficulty, strategy }))()
       return { success: true }
     } catch (error) {
       console.error('DB error:', error)
@@ -2165,15 +2256,17 @@ ${history.length ? `- Học viên đã làm các câu sau, KHÔNG lặp lại v�
     }
   })
 
-  ipcMain.handle('generate-assessment-quiz', async (event, { profileId, targetLanguage, nativeLanguage, cefrLevel }) => {
+  ipcMain.handle('generate-assessment-quiz', async (event, { profileId, targetLanguage, nativeLanguage }) => {
     try {
+      const cefrLevel = nextAssessmentLevel(profileId)
       const p = getProfile(cefrLevel)
       const history = recentQuestions(profileId)
       const batches = [
-        { start: 0, end: 15, name: 'Ngữ pháp và từ vựng nền tảng', maxTokens: 4800, instructions: 'Viết 15 câu độc lập mức dễ về ngữ pháp và từ vựng nền tảng. Không viết bài đọc.' },
-        { start: 15, end: 20, name: 'Đọc điền từ', maxTokens: 3000, instructions: 'Tạo MỘT đoạn văn tiếng Anh liền mạch 120–160 từ có đúng 5 chỗ trống được đánh dấu chính xác (1) ____, (2) ____, (3) ____, (4) ____, (5) ____. Tạo đúng 5 bộ lựa chọn, mỗi bộ chỉ kiểm tra chỗ trống tương ứng; đáp án đúng phải hoàn thành tự nhiên câu chứa chỗ trống đó. question của mỗi mục chỉ ghi ngắn “Choose the correct answer for blank (N).”, blankNumber lần lượt là số nguyên 1, 2, 3, 4, 5. KHÔNG chép đoạn văn vào question. Đặt toàn văn đoạn đọc vào passage của câu đầu tiên; 4 câu sau để passage rỗng. Không tạo câu hỏi ngữ pháp/vốn từ độc lập ngoài đoạn đọc.' },
-        { start: 20, end: 25, name: 'Đọc hiểu', maxTokens: 3400, instructions: 'Tạo một bài đọc 180–220 từ và 5 câu hỏi hiểu bài gồm ý chính, chi tiết, tham chiếu, suy luận và từ vựng theo ngữ cảnh. Đặt toàn bộ đoạn văn vào passage của câu đầu tiên, 4 câu sau để passage rỗng.' },
-        { start: 25, end: 30, name: 'Đọc hiểu nâng cao', maxTokens: 4000, instructions: 'Tạo một bài đọc 220–260 từ và 5 câu hỏi cần suy luận/tổng hợp ở mức khó hơn. Đặt toàn bộ đoạn văn vào passage của câu đầu tiên, 4 câu sau để passage rỗng.' }
+        { start: 0, end: 15, name: 'Ngữ pháp và cấu trúc nền tảng', maxTokens: 4800, instructions: 'Viết 15 câu độc lập dễ, dùng các cấu trúc quen thuộc của đề nhập môn. Câu đầu dễ nhất, sau đó tăng nhẹ độ khó. Ưu tiên tình huống đời thường và câu ngắn rõ nghĩa; tránh mẹo đánh đố.' },
+        { start: 15, end: 25, name: 'Vận dụng ngữ pháp và từ vựng', maxTokens: 3500, instructions: 'Viết 10 câu độc lập kiểm tra cấu trúc câu, từ vựng và ngữ pháp theo ngữ cảnh. Khó hơn phần đầu nhưng vẫn đúng mức CEFR đang kiểm tra; tránh kiến thức của mức cao hơn.' },
+        { start: 25, end: 30, name: 'Đọc điền từ', maxTokens: 3000, instructions: 'Tạo MỘT đoạn văn tiếng Anh liền mạch 100–140 từ có đúng 5 chỗ trống được đánh dấu chính xác (1) ____, (2) ____, (3) ____, (4) ____, (5) ____. Tạo đúng 5 bộ lựa chọn, mỗi bộ chỉ kiểm tra chỗ trống tương ứng; đáp án đúng phải hoàn thành tự nhiên câu chứa chỗ trống đó. question của mỗi mục chỉ ghi ngắn “Choose the correct answer for blank (N).”, blankNumber lần lượt là số nguyên 1, 2, 3, 4, 5. KHÔNG chép đoạn văn vào question. Đặt toàn văn đoạn đọc vào passage của câu đầu tiên; 4 câu sau để passage rỗng.' },
+        { start: 30, end: 35, name: 'Đọc hiểu', maxTokens: 3400, instructions: 'Tạo một bài đọc 150–190 từ phù hợp mức CEFR đang kiểm tra và 5 câu hỏi gồm ý chính, chi tiết, tham chiếu, suy luận đơn giản và từ vựng theo ngữ cảnh. Đặt toàn bộ đoạn văn vào passage của câu đầu tiên, 4 câu sau để passage rỗng.' },
+        { start: 35, end: 40, name: 'Đọc hiểu nâng cao', maxTokens: 4000, instructions: 'Tạo một bài đọc 180–220 từ và 5 câu hỏi cần suy luận/tổng hợp khó hơn phần trước, nhưng không vượt quá mức CEFR đang kiểm tra. Đặt toàn bộ đoạn văn vào passage của câu đầu tiên, 4 câu sau để passage rỗng.' }
       ]
       const questions = []
       for (const batch of batches) {
@@ -2182,54 +2275,41 @@ ${history.length ? `- Học viên đã làm các câu sau, KHÔNG lặp lại v�
           .map((item, i) => `${batch.start + i + 1}. ${item.difficulty} — ${item.skill}`)
           .join('\n')
         const priorQuestions = history.slice(0, 20)
-        const contents = `Bạn là chuyên gia biên soạn bài đánh giá tiếng Anh theo phong cách THPT Việt Nam cho học viên có tiếng mẹ đẻ là ${nativeLanguage}, trình độ ${cefrLevel} (${p.style}). Đây là phần ${batch.name} của bài đánh giá nội bộ, không phải đề thi chính thức.\n\nTạo đúng ${count} câu hợp lệ. Ma trận theo thứ tự:\n${batchBlueprint}\n\n${batch.instructions}\n\nMỗi câu có câu hỏi bằng ${targetLanguage}, đúng 4 lựa chọn khác nhau và chỉ một đáp án chính xác. answer phải khớp nguyên văn với một lựa chọn. explanation ngắn bằng ${nativeLanguage}; focus ghi chủ điểm cụ thể; questionType ghi loại câu. Với câu không thuộc đoạn đọc, passage để chuỗi rỗng. Không lược câu, không thêm lời dẫn ngoài JSON. Ứng dụng sẽ tự gắn nhãn kỹ năng và độ khó theo vị trí.\n${priorQuestions.length ? `Tránh lặp các câu gần đây sau đây:\n${avoidLines(priorQuestions)}` : ''}\nChỉ trả JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","focus":"...","explanation":"...","questionType":"...","passage":"..."}]}`
+        const contents = `Bạn là chuyên gia biên soạn bài đánh giá tiếng Anh cho học viên có tiếng mẹ đẻ là ${nativeLanguage}. Mức bài hiện tại là CEFR ${cefrLevel} (${p.style}). Đây là phần ${batch.name} của bài đánh giá nội bộ, không phải đề thi chính thức.\n\nTạo đúng ${count} câu hợp lệ. Ma trận theo thứ tự:\n${batchBlueprint}\n\n${batch.instructions}\n\nCâu hỏi phải có đúng một đáp án rõ ràng; ba phương án nhiễu sai thật sự, không dùng cách diễn đạt mơ hồ hoặc đánh đố. Không bịa quy tắc ngữ pháp; ví dụ với She ở hiện tại đơn, động từ thường cần thêm -s/-es. Mỗi câu có câu hỏi bằng ${targetLanguage}, đúng 4 lựa chọn khác nhau và chỉ một đáp án chính xác. answer phải khớp nguyên văn với một lựa chọn. explanation ngắn và chính xác bằng ${nativeLanguage}; focus ghi chủ điểm cụ thể; questionType ghi loại câu. Với câu độc lập, passage là chuỗi rỗng. Không lược câu, không thêm lời dẫn ngoài JSON. Ứng dụng sẽ tự gắn nhãn kỹ năng và độ khó theo vị trí.\n${priorQuestions.length ? `Tránh lặp các câu gần đây sau đây:\n${avoidLines(priorQuestions)}` : ''}\nChỉ trả JSON: {"questions":[{"question":"...","options":["...","...","...","..."],"answer":"...","focus":"...","explanation":"...","questionType":"...","passage":"..."}]}`
         let batchQuestions = []
         let passage = ''
         for (let attempt = 0; attempt < 2; attempt++) {
           const response = await generateWithRetry({ maxTokens: batch.maxTokens, temperature: 0.65, contents })
           batchQuestions = normalizeQuizQuestions(salvageQuestions(response.text), SKILL_IDS)
           passage = batchQuestions.map((question) => question.passage).find(Boolean) || ''
-          const gapNumbers = [...passage.matchAll(/\(\s*([1-5])\s*\)\s*_{2,}/g)].map((match) => Number(match[1]))
-          const validCloze = batch.start !== 15 || (
-            gapNumbers.length === 5 &&
-            gapNumbers.every((number, i) => number === i + 1) &&
-            batchQuestions.every((question, i) =>
-              question.question.length < 120 &&
-              new RegExp(`(?:blank|gap)\\s*\\(?${i + 1}\\)?`, 'i').test(question.question) &&
-              (question.blankNumber == null || question.blankNumber === i + 1)
-            )
-          )
-          if (batchQuestions.length === count && (batch.start < 15 || passage) && validCloze) break
-          console.warn(`Assessment section ${batch.name}: received ${batchQuestions.length}/${count} valid questions${passage ? '' : ', passage missing'}; retrying`)
+          const gaps = [...passage.matchAll(/\(\s*([1-5])\s*\)\s*_{2,}/g)].map((match) => Number(match[1]))
+          const validCloze = batch.start !== 25 || (gaps.length === 5 && gaps.every((number, i) => number === i + 1) && batchQuestions.every((question, i) => question.question.length < 120 && new RegExp(`(?:blank|gap)\\s*\\(?${i + 1}\\)?`, 'i').test(question.question)))
+          if (batchQuestions.length === count && (batch.start < 25 || passage) && validCloze) break
+          console.warn(`Assessment section ${batch.name}: received ${batchQuestions.length}/${count} valid questions; retrying`)
         }
-        if (batchQuestions.length !== count) {
+        if (batchQuestions.length !== count || (batch.start >= 25 && !passage)) {
           throw new Error(`Assessment section ${batch.name} returned ${batchQuestions.length}/${count} valid questions`)
         }
-        if (batch.start >= 15 && !passage) throw new Error(`Assessment section ${batch.name} is missing its passage`)
-        if (batch.start === 15) {
-          const gapNumbers = [...passage.matchAll(/\(\s*([1-5])\s*\)\s*_{2,}/g)].map((match) => Number(match[1]))
-          if (gapNumbers.length !== 5 || !gapNumbers.every((number, i) => number === i + 1) || !batchQuestions.every((question, i) =>
-            question.question.length < 120 &&
-            new RegExp(`(?:blank|gap)\\s*\\(?${i + 1}\\)?`, 'i').test(question.question) &&
-            (question.blankNumber == null || question.blankNumber === i + 1)
-          )) {
-            throw new Error('Assessment cloze section must have five numbered gaps and five matching short questions')
-          }
+        if (batch.start === 25) {
+          const gaps = [...passage.matchAll(/\(\s*([1-5])\s*\)\s*_{2,}/g)].map((match) => Number(match[1]))
+          if (gaps.length !== 5 || !gaps.every((number, i) => number === i + 1)) throw new Error('Assessment cloze passage must have five numbered gaps')
         }
         batchQuestions.forEach((question, i) => {
           const blueprintItem = ASSESSMENT_BLUEPRINT[batch.start + i]
           questions.push({
             ...question,
-            ...blueprintItem,
-            passage: batch.start >= 15 ? passage : '',
-            blankNumber: batch.start === 15 ? i + 1 : null,
+            skill: blueprintItem.skill,
+            difficulty: blueprintItem.difficulty,
+            section: batch.name,
+            passage: batch.start >= 25 ? passage : '',
+            blankNumber: batch.start === 25 ? i + 1 : null,
             skillLabel: SKILL_BY_ID[blueprintItem.skill]?.label || 'Khác',
-            questionType: question.questionType || (batch.start < 15 ? 'Trắc nghiệm' : batch.start === 15 ? 'Cloze' : 'Đọc hiểu')
+            questionType: question.questionType || (batch.start < 25 ? 'Trắc nghiệm' : batch.start === 25 ? 'Cloze' : 'Đọc hiểu')
           })
         })
       }
       if (questions.length !== ASSESSMENT_BLUEPRINT.length) throw new Error(`Assessment assembled ${questions.length}/${ASSESSMENT_BLUEPRINT.length} questions`)
-      return { success: true, questions }
+      return { success: true, questions, assessmentLevel: cefrLevel }
     } catch (error) {
       console.error('Assessment quiz error:', error)
       logError('assessment-quiz', error)
@@ -2469,7 +2549,8 @@ ${seen.length ? `Đã dùng, KHÔNG lặp lại:\n${seen.slice(0, 12).map((s) =>
   ipcMain.handle('save-quiz-attempt', async (event, { profileId, mode, label, details }) => {
     try {
       const clip = (v, n) => String(v ?? '').slice(0, n)
-      const list = (Array.isArray(details) ? details : []).slice(0, 30).map((d) => ({
+      const assessmentLevel = mode === 'assessment' ? nextAssessmentLevel(profileId) : null
+      const list = (Array.isArray(details) ? details : []).slice(0, mode === 'assessment' ? ASSESSMENT_BLUEPRINT.length : 30).map((d) => ({
         question: clip(d.question, 400),
         focus: clip(d.focus, 80),
         options: (Array.isArray(d.options) ? d.options : []).slice(0, 5).map((o) => clip(o, 200)),
@@ -2480,20 +2561,45 @@ ${seen.length ? `Đã dùng, KHÔNG lặp lại:\n${seen.slice(0, 12).map((s) =>
         difficulty: ['easy', 'medium', 'hard'].includes(d.difficulty) ? d.difficulty : null,
         section: clip(d.section, 100),
         blankNumber: Number.isInteger(Number(d.blankNumber)) && Number(d.blankNumber) > 0 ? Number(d.blankNumber) : null,
-        passage: clip(d.passage, 2600)
+        passage: clip(d.passage, 2600),
+        ...(assessmentLevel ? { assessmentLevel } : {})
       }))
-      if (list.length === 0) return { success: false }
+      if (list.length === 0 || (mode === 'assessment' && list.length !== ASSESSMENT_BLUEPRINT.length)) return { success: false }
       const correct = list.filter((d) => d.picked === d.answer).length
-      db.prepare(`
+      const result = db.transaction(() => {
+        db.prepare(`
         INSERT INTO quiz_attempts (profile_id, mode, label, total, correct, details) VALUES (?, ?, ?, ?, ?, ?)
       `).run(profileId, ['adaptive', 'assessment'].includes(mode) ? mode : 'quiz', clip(label, 80), list.length, correct, JSON.stringify(list))
+        for (const item of list) {
+          recordLearningEvent({
+            profileId,
+            skill: item.skill,
+            correct: item.picked === item.answer,
+            source: ['adaptive', 'assessment'].includes(mode) ? mode : 'quiz',
+            question: item.question,
+            focus: item.focus,
+            difficulty: item.difficulty
+          })
+        }
+        let promotedLevel = null
+        if (assessmentLevel && correct / list.length >= 0.9) {
+          const profile = db.prepare('SELECT cefr_level FROM profile WHERE id = ?').get(profileId)
+          const oldLevel = profile?.cefr_level
+          if (LEVELS.indexOf(assessmentLevel) === LEVELS.indexOf(oldLevel) + 1) {
+            db.prepare('UPDATE profile SET cefr_level = ?, level_source = ? WHERE id = ?').run(assessmentLevel, 'assessment', profileId)
+            db.prepare('INSERT INTO level_history (profile_id, old_level, new_level, source) VALUES (?, ?, ?, ?)').run(profileId, oldLevel, assessmentLevel, 'assessment')
+            promotedLevel = assessmentLevel
+          }
+        }
       // giữ tối đa 100 bài gần nhất cho mỗi tài khoản
-      db.prepare(`
+        db.prepare(`
         DELETE FROM quiz_attempts WHERE profile_id = ? AND id NOT IN (
           SELECT id FROM quiz_attempts WHERE profile_id = ? ORDER BY id DESC LIMIT 100
         )
       `).run(profileId, profileId)
-      return { success: true }
+        return { success: true, promotedLevel, assessmentLevel }
+      })()
+      return result
     } catch (error) {
       console.error('Save attempt error:', error)
       logError('save-attempt', error)

@@ -263,13 +263,19 @@ function speakText(text, lang, onEnd, voice = 'af_heart') {
   return speakNaturalText(text, lang, onEnd, voice)
 }
 
+function speakFlashcardWord(word, lang, voice = 'af_heart') {
+  const text = String(word || '').trim()
+  if (!text) return false
+  return speakNaturalText(/[.!?]$/.test(text) ? text : `${text}.`, lang, undefined, voice, undefined, 0.92)
+}
+
 let naturalSpeechRequest = 0
 function cancelNaturalSpeech() {
   naturalSpeechRequest += 1
   stopSpeechAudio(window)
 }
 
-async function speakNaturalText(text, lang, onEnd, voice = 'af_heart', onFallback) {
+async function speakNaturalText(text, lang, onEnd, voice = 'af_heart', onFallback, speed = 1) {
   const requestId = ++naturalSpeechRequest
   stopSpeechAudio(window)
   const speechText = cleanSpeechText(text)
@@ -280,7 +286,7 @@ async function speakNaturalText(text, lang, onEnd, voice = 'af_heart', onFallbac
   if (/^en(?:-|$)/i.test(lang)) {
     if (window.api?.synthesizeSpeechLocal) {
       try {
-        const result = await window.api.synthesizeSpeechLocal({ text: speechText, voice })
+        const result = await window.api.synthesizeSpeechLocal({ text: speechText, voice, speed })
         if (requestId !== naturalSpeechRequest) return false
         if (result?.success && result.audio?.length) {
           return playSpeechAudio({ environment: window, audio: result.audio, sampleRate: result.sampleRate, onEnd })
@@ -1382,7 +1388,7 @@ const quizCss = `
   .qghost:hover { color: var(--text) !important; }
   .qinput:focus { border-color: var(--accent) !important; }
 `
-function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
+function QuizSetup({ profile, mistakeCount, onStart }) {
   const [selected, setSelected] = useState('weak')
   const [custom, setCustom] = useState('')
   const [count, setCount] = useState(5)
@@ -1492,10 +1498,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
         />
       </div>
 
-      <div style={{ ...onboardStyles.actions, marginTop: '8px' }}>
-        <button className="qghost" style={quizStyles.ghost} onClick={onBack}>
-          <Icon name="back" size={16} /> Quay lại
-        </button>
+      <div className="review-setup-footer">
         <button className="qprimary" style={quizStyles.primary} onClick={start}>
           Bắt đầu <Icon name="next" size={16} />
         </button>
@@ -1504,7 +1507,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   )
 }
 
- function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, loader, attemptMode = 'quiz', previousAssessment, onExit }) {
+ function QuizScreen({ profileId, profile, cefrLevel, topic, label, count, preset, loader, attemptMode = 'quiz', previousAssessment, onLevelPromoted, onExit }) {
   // loading | question | answered | done | error
   const [phase, setPhase] = useState('loading')
   const [questions, setQuestions] = useState([])
@@ -1512,6 +1515,8 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
   const [picked, setPicked] = useState(null)
   const [score, setScore] = useState(0)
   const [assessmentAnswers, setAssessmentAnswers] = useState({})
+  const [assessmentLevel, setAssessmentLevel] = useState(cefrLevel)
+  const [promotedLevel, setPromotedLevel] = useState(null)
   const [errMsg, setErrMsg] = useState('')
   const [log, setLog] = useState([])
   const savedRef = useRef(false)
@@ -1521,6 +1526,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
     setErrMsg('')
     setLog([])
     setAssessmentAnswers({})
+    setPromotedLevel(null)
     savedRef.current = false
     if (preset) {
       setQuestions(shuffleArr(preset).map(reshuffleQuestion))
@@ -1541,6 +1547,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
           count
         })
     if (res.success && res.questions.length > 0) {
+      if (res.assessmentLevel) setAssessmentLevel(res.assessmentLevel)
       setQuestions(res.questions)
       setIndex(0)
       setPicked(null)
@@ -1568,15 +1575,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
     const focus = q.focus || q.structure || (
       ['preset', 'custom'].includes(topic?.type) ? topic.value : q.skillLabel || q.skill
     )
-    window.api.recordSkillEvent({
-      profileId,
-      skill: q.skill,
-      correct: ok,
-      source: preset ? 'retry' : attemptMode === 'assessment' ? 'assessment' : 'quiz',
-      question: preset ? undefined : q.question,
-      focus,
-      difficulty: q.difficulty
-    })
+    if (preset) window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'retry', focus, difficulty: q.difficulty })
     setLog((l) => [
       ...l,
       { question: q.question, options: q.options, answer: q.answer, picked: i, explanation: q.explanation, skill: q.skill, focus, difficulty: q.difficulty }
@@ -1619,15 +1618,6 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
         blankNumber: q.blankNumber,
         passage: q.passage
       }
-      window.api.recordSkillEvent({
-        profileId,
-        skill: q.skill,
-        correct: pickedAnswer === q.answer,
-        source: 'assessment',
-        question: q.question,
-        focus,
-        difficulty: q.difficulty
-      })
       return detail
     })
     const finalScore = details.filter((item) => item.picked === item.answer).length
@@ -1645,6 +1635,10 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
       setErrMsg('Chưa lưu được kết quả. Câu trả lời vẫn còn trên màn hình; hãy thử lưu lại trước khi rời bài.')
       setPhase('save-error')
       return
+    }
+    if (saved.promotedLevel) {
+      setPromotedLevel(saved.promotedLevel)
+      onLevelPromoted?.(saved.promotedLevel)
     }
     setPhase('done')
   }
@@ -1721,7 +1715,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
         <p style={{ color: 'var(--text-muted)', maxWidth: '460px', margin: 0 }}>{errMsg}</p>
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Rời bài</button>
-          <button className="qprimary" style={quizStyles.primary} onClick={finish}>Thử lưu lại</button>
+          <button className="qprimary" style={quizStyles.primary} onClick={attemptMode === 'assessment' ? submitAssessment : finish}>Thử lưu lại</button>
         </div>
       </>
     )
@@ -1749,7 +1743,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
       <>
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
-        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{msg}</p>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{attemptMode === 'assessment' ? pct >= 90 ? promotedLevel ? `Đạt bài ${assessmentLevel}. Trình độ của bạn đã tăng lên ${promotedLevel}.` : assessmentLevel === 'C2' ? 'Đã đạt bài ở mức C2.' : `Đạt bài ${assessmentLevel}. Bài tiếp theo sẽ khó hơn.` : `Chưa đạt 90% ở mức ${assessmentLevel}. Bạn có thể làm một đề mới cùng mức để luyện thêm.` : msg}</p>
         {attemptMode === 'assessment' && (
           <div style={{ ...progressStyles.card, width: '100%', maxWidth: '640px', textAlign: 'left' }}>
             <div style={progressStyles.cardTitle}>Kết quả theo chủ điểm</div>
@@ -1762,7 +1756,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
                 <strong style={{ color: item.total < 2 ? 'var(--text-muted)' : scoreColor(item.correct, item.total) }}>{item.correct}/{item.total}</strong>
               </div>
             ))}
-            {previousAssessment && <p style={{ margin: '10px 0 0', color: 'var(--text-muted)', fontSize: fs(13) }}>So với lần trước: {previousAssessment.correct}/{previousAssessment.total} ({Math.round(previousAssessment.correct / previousAssessment.total * 100)}%) · {pct - Math.round(previousAssessment.correct / previousAssessment.total * 100) > 0 ? '+' : ''}{pct - Math.round(previousAssessment.correct / previousAssessment.total * 100)} điểm phần trăm</p>}
+            {previousAssessment?.total > 0 && <p style={{ margin: '10px 0 0', color: 'var(--text-muted)', fontSize: fs(13) }}>So với lần trước: {previousAssessment.correct}/{previousAssessment.total} ({Math.round(previousAssessment.correct / previousAssessment.total * 100)}%) · {pct - Math.round(previousAssessment.correct / previousAssessment.total * 100) > 0 ? '+' : ''}{pct - Math.round(previousAssessment.correct / previousAssessment.total * 100)} điểm phần trăm</p>}
           </div>
         )}
         <div className={attemptMode === 'assessment' ? 'assessment-results-grid' : undefined} style={{ width: '100%', maxWidth: attemptMode === 'assessment' ? '1200px' : '640px', display: attemptMode === 'assessment' ? 'grid' : 'flex', gridTemplateColumns: attemptMode === 'assessment' ? 'repeat(3, minmax(0, 1fr))' : undefined, flexDirection: attemptMode === 'assessment' ? undefined : 'column', gap: '10px' }}>
@@ -1779,7 +1773,7 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>
-            {preset ? 'Làm lại' : 'Bộ câu hỏi mới'}
+            {preset ? 'Làm lại' : attemptMode === 'assessment' ? pct >= 90 && assessmentLevel !== 'C2' ? 'Làm đề khó hơn' : 'Làm đề khác' : 'Bộ câu hỏi mới'}
           </button>
         </div>
       </>,
@@ -1797,9 +1791,9 @@ function QuizSetup({ profile, mistakeCount, onBack, onStart }) {
       <div className="assessment-paper">
         <header className="assessment-paper-header">
           <div>
-            <span className="assessment-paper-kicker">BÀI ĐÁNH GIÁ TỔNG QUÁT · {cefrLevel}</span>
+            <span className="assessment-paper-kicker">BÀI ĐÁNH GIÁ TỔNG QUÁT · {assessmentLevel}</span>
             <h1>Kiểm tra tiếng Anh</h1>
-            <p>30 câu trắc nghiệm · Làm lần lượt từ dễ đến khó · Chọn một đáp án cho mỗi câu</p>
+            <p>{questions.length} câu trắc nghiệm · Từ dễ đến khó · Đạt ít nhất 90% để mở mức tiếp theo</p>
           </div>
           <div className="assessment-paper-progress" aria-live="polite">
             <strong>{answeredCount}<span> / {questions.length}</span></strong>
@@ -2077,7 +2071,6 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
     const q = current.q
     const ok = i === q.answer
     const focus = q.focus || q.structure || q.skillLabel || q.skill
-    window.api.recordSkillEvent({ profileId, skill: q.skill, correct: ok, source: 'adaptive', question: q.question, focus, difficulty: q.difficulty, strategy: q.strategy })
     setAsked((a) => [
       ...a,
       {
@@ -2577,7 +2570,7 @@ function buildSpotFromItems(items) {
     .filter(Boolean)
 }
 
-function GameSetup({ title, intro, reviewTitle, reviewDesc, reviewReady, newTitle, newDesc, topicLabel, profile, onStart, onBack }) {
+function GameSetup({ title, intro, reviewTitle, reviewDesc, reviewReady, newTitle, newDesc, topicLabel, profile, onStart }) {
   const [mode, setMode] = useState(reviewReady ? 'review' : 'new')
   const [topicSel, setTopicSel] = useState('random')
   const [custom, setCustom] = useState('')
@@ -2673,10 +2666,7 @@ function GameSetup({ title, intro, reviewTitle, reviewDesc, reviewReady, newTitl
         </Field>
       )}
 
-      <div style={{ ...onboardStyles.actions, marginTop: '8px' }}>
-        <button className="qghost" style={quizStyles.ghost} onClick={onBack}>
-          <Icon name="back" size={16} /> Quay lại
-        </button>
+      <div className="review-setup-footer">
         <button className="qprimary" style={quizStyles.primary} onClick={start}>
           Tiếp tục <Icon name="next" size={16} />
         </button>
@@ -2843,14 +2833,13 @@ function ClozeGame({ profileId, profile, cefrLevel, onExit }) {
         title="Điền từ vào câu"
         intro="Chọn từ đúng cho chỗ trống trong câu ví dụ."
         reviewTitle="Ôn từ của tôi"
-        reviewDesc={`Dùng câu ví dụ trong flashcard (${eligible} từ dùng được)`}
+        reviewDesc={`${eligible} từ trong flashcard có câu ví dụ`}
         reviewReady={eligible >= 3 && wordsRef.current.length >= 4}
         newTitle="Từ mới (AI tạo)"
-        newDesc="AI tạo từ chưa có trong flashcard của bạn, kèm câu ví dụ"
+        newDesc="Từ mới kèm câu ví dụ"
         topicLabel="Chủ đề từ mới"
         profile={profile}
         onStart={run}
-        onBack={onExit}
       />
     )
   }
@@ -3095,14 +3084,13 @@ function SpotGame({ profileId, profile, cefrLevel, onExit }) {
         title="Tìm câu sai"
         intro="Trong ba câu, tìm câu có lỗi."
         reviewTitle="Lỗi của tôi"
-        reviewDesc={reviewCount > 0 ? 'Dùng các câu bạn từng viết sai khi trò chuyện' : 'Chưa đủ lỗi sai được ghi nhận'}
+        reviewDesc={reviewCount > 0 ? 'Luyện lại lỗi từng mắc' : 'Chưa có lỗi để ôn'}
         reviewReady={reviewCount > 0}
         newTitle="Câu mới (AI tạo)"
-        newDesc="AI viết câu đúng và câu có một lỗi thường gặp ở trình độ của bạn"
+        newDesc="Tìm lỗi thường gặp trong câu mới"
         topicLabel="Chủ đề câu"
         profile={profile}
         onStart={run}
-        onBack={onExit}
       />
     )
   }
@@ -3407,16 +3395,15 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
         reviewTitle="Ôn từ của tôi"
         reviewDesc={
           reviewCount >= MATCH_ROUND
-            ? `Dùng ${reviewCount} từ trong flashcard${reviewCount < 18 ? ' (kho còn ít nên sẽ lặp lại)' : ''}`
-            : `Cần ít nhất ${MATCH_ROUND} từ khác nghĩa (hiện có ${reviewCount})`
+            ? `${reviewCount} từ trong flashcard${reviewCount < 18 ? ' · có lặp lại' : ''}`
+            : `Cần ${MATCH_ROUND} từ, hiện có ${reviewCount}`
         }
         reviewReady={reviewCount >= MATCH_ROUND}
         newTitle="Từ mới (AI tạo)"
-        newDesc="AI tạo khoảng 40 từ chưa có trong flashcard, không lặp lại các lần trước"
+        newDesc="Khoảng 40 từ mới, không trùng lần trước"
         topicLabel="Chủ đề từ mới"
         profile={profile}
         onStart={run}
-        onBack={onExit}
       />
     )
   }
@@ -3536,6 +3523,30 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
 }
 
 const STRUCTURES = [
+  { id: 'agreement', group: 'Cấu trúc nền tảng', level: 'A1', skill: 'agreement', title: 'Hòa hợp chủ ngữ – động từ',
+    formula: ['He / She / It + V(s/es)', 'I / You / We / They + V', 'He / She / It + does not + V'],
+    use: 'Ở hiện tại đơn, động từ thường thêm -s/-es với chủ ngữ ngôi thứ ba số ít. Sau does/does not, động từ trở về dạng nguyên mẫu.',
+    examples: [['She needs a new pen.', 'Cô ấy cần một cây bút mới.'], ["They don't need a new pen.", 'Họ không cần bút mới.']] },
+  { id: 'articles', group: 'Cấu trúc nền tảng', level: 'A1', skill: 'article', title: 'Mạo từ a, an, the',
+    formula: ['a / an + danh từ đếm được số ít chưa xác định', 'the + danh từ đã xác định'],
+    use: 'Dùng a trước âm phụ âm, an trước âm nguyên âm; dùng the khi người nghe biết rõ đối tượng nào được nhắc tới.',
+    examples: [['I saw a dog. The dog was friendly.', 'Tôi thấy một con chó. Con chó đó rất thân thiện.'], ['She is an engineer.', 'Cô ấy là một kỹ sư.']] },
+  { id: 'word_order', group: 'Cấu trúc nền tảng', level: 'A1', skill: 'word_order', title: 'Trật tự từ trong câu',
+    formula: ['Câu kể: S + V + O', 'Câu hỏi: trợ động từ + S + V?'],
+    use: 'Câu kể thường bắt đầu bằng chủ ngữ rồi đến động từ. Với câu hỏi hiện tại đơn, đặt do/does trước chủ ngữ.',
+    examples: [['She reads books every evening.', 'Cô ấy đọc sách mỗi tối.'], ['Does she read books?', 'Cô ấy có đọc sách không?']] },
+  { id: 'prepositions', group: 'Cấu trúc nền tảng', level: 'A1', skill: 'preposition', title: 'Giới từ chỉ thời gian và nơi chốn',
+    formula: ['at + giờ / địa điểm cụ thể', 'on + thứ, ngày', 'in + tháng, năm / không gian bao quanh'],
+    use: 'Chọn giới từ theo mốc thời gian hoặc vị trí được nhắc đến; một số cụm cố định cần học theo ngữ cảnh.',
+    examples: [['The class starts at 8 a.m. on Monday.', 'Lớp bắt đầu lúc 8 giờ sáng thứ Hai.'], ['She lives in Hanoi.', 'Cô ấy sống ở Hà Nội.']] },
+  { id: 'word_forms', group: 'Cấu trúc nền tảng', level: 'A2', skill: 'vocabulary', title: 'Từ loại và chọn từ',
+    formula: ['a/an/the + tính từ + danh từ', 'S + động từ + trạng từ', 'be + tính từ'],
+    use: 'Dựa vào vị trí trong câu để chọn danh từ, động từ, tính từ hoặc trạng từ; sau đó kiểm tra nghĩa có hợp ngữ cảnh không.',
+    examples: [['She is a careful driver.', 'Cô ấy là một tài xế cẩn thận.'], ['She drives carefully.', 'Cô ấy lái xe cẩn thận.']] },
+  { id: 'questions', group: 'Cấu trúc nền tảng', level: 'A1', skill: 'structure', title: 'Câu hỏi với do, does, did',
+    formula: ['Do / Does + S + V?', 'Did + S + V?'],
+    use: 'Đặt trợ động từ trước chủ ngữ. Sau do, does hoặc did, động từ chính luôn ở dạng nguyên mẫu.',
+    examples: [['Does she like coffee?', 'Cô ấy có thích cà phê không?'], ['Did they go home?', 'Họ đã về nhà chưa?']] },
   // ===== Các thì =====
   { id: 'present_simple', group: 'Các thì', level: 'A1', skill: 'tense', title: 'Hiện tại đơn',
     formula: ['S + V(s/es)', 'S + do/does not + V'],
@@ -3677,6 +3688,25 @@ const STRUCTURES = [
 
 const STRUCT_GROUPS = [...new Set(STRUCTURES.map((s) => s.group))]
 
+function structureIdForFocus(skill, focus = '') {
+  const normalized = String(focus).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const matchingTitle = STRUCTURES.find((item) => normalized.includes(item.title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()))
+  if (matchingTitle) return matchingTitle.id
+  if (/auxiliary|question|tro dong tu|cau hoi/.test(normalized)) return 'questions'
+  if (/subject.?verb|agreement|chu ngu|hoa hop|third person/.test(normalized)) return 'agreement'
+  if (/article|mao tu/.test(normalized)) return 'articles'
+  if (/word order|trat tu/.test(normalized)) return 'word_order'
+  if (/preposition|gioi tu/.test(normalized)) return 'prepositions'
+  if (/future|tuong lai|going to/.test(normalized)) return 'future_forms'
+  if (/past simple|qua khu don/.test(normalized)) return 'past_simple'
+  if (/present simple|hien tai don/.test(normalized)) return 'present_simple'
+  if (/conditional|dieu kien/.test(normalized)) return 'cond_1'
+  if (/passive|bi dong/.test(normalized)) return 'passive'
+  if (/relative|quan he/.test(normalized)) return 'relative'
+  if (/modal|khuyet thieu/.test(normalized)) return 'modals'
+  return { agreement: 'agreement', article: 'articles', word_order: 'word_order', preposition: 'prepositions', vocabulary: 'word_forms', tense: 'present_simple', structure: 'questions' }[skill] || 'word_forms'
+}
+
 const structStyles = {
   detail: { flex: 1, minWidth: 0, minHeight: 0, height: 'auto', overflowY: 'auto', padding: '28px', boxSizing: 'border-box', textAlign: 'left', background: 'var(--surface)', border: '1px solid var(--border-soft)', borderRadius: '18px' },
   inner: { maxWidth: '1080px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '16px' },
@@ -3711,8 +3741,8 @@ const structStyles = {
   }
 }
 
-function StructureScreen({ profileId, profile, cefrLevel, speechVoice, onExit, onStartSpeaking }) {
-  const [selectedId, setSelectedId] = useState(STRUCTURES[0].id)
+function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialStructureId, onExit, onStartSpeaking }) {
+  const [selectedId, setSelectedId] = useState(initialStructureId || STRUCTURES[0].id)
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState('library') // library | quiz
   const [quiz, setQuiz] = useState(null)
@@ -3815,10 +3845,10 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, onExit, o
             </div>
           ))}
         </div>
-        <button className="explorer-back" type="button" onClick={onExit}><Icon name="back" size={16} /> Quay lại luyện tập</button>
       </aside>
 
       <main className="structure-detail" style={structStyles.detail}>
+        <div className="structure-detail-toolbar"><button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button></div>
         <div className="structure-inner" style={structStyles.inner}>
           <div className="structure-heading">
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
@@ -3946,7 +3976,7 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
     }
   }
   const inputStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', padding: 12, font: 'inherit', lineHeight: 1.6, resize: 'vertical' }
-  return <div style={{ display: 'grid', gap: 14, maxWidth: 760 }}>
+  return <div className="writing-practice-screen"><div className="writing-practice-form">
     <div><h3 style={{ margin: 0, color: 'var(--text-strong)' }}>Viết một đoạn ngắn</h3><p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>AI chấm theo 4 tiêu chí, chỉ ra câu cần sửa và lưu kết quả vào bản đồ kỹ năng Viết.</p></div>
     <label style={{ display: 'grid', gap: 6, color: 'var(--text-soft)', fontSize: 13, fontWeight: 600 }}>Đề bài<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} style={inputStyle} maxLength={700} /></label>
     <label style={{ display: 'grid', gap: 6, color: 'var(--text-soft)', fontSize: 13, fontWeight: 600 }}>Bài viết của bạn<textarea value={response} onChange={(event) => setResponse(event.target.value)} rows={9} style={inputStyle} maxLength={5000} placeholder="Viết bằng tiếng Anh ở đây…" /></label>
@@ -3959,7 +3989,7 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
       {feedback.nextStep && <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: 13 }}><strong>Bước tiếp theo: </strong>{feedback.nextStep}</p>}
       <small style={{ color: 'var(--text-muted)' }}>Điểm nội bộ để theo dõi tiến bộ; không phải chứng chỉ CEFR.</small>
     </section>}
-  </div>
+  </div></div>
 }
 
 function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, initialMode = 'setup', onRefresh, onExit, onStartSpeaking }) {
@@ -4072,13 +4102,12 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
             {item.badge > 0 && <span className="review-mode-link-badge">{item.badge > 99 ? '99+' : item.badge}</span>}
           </button>)}
         </div>)}
-        <button className="review-workspace-back" type="button" onClick={onExit}><Icon name="back" size={16} /> Quay lại luyện tập</button>
       </aside>
 
       <section className="review-workspace-center" aria-label={selectedModeInfo?.title || 'Hoạt động ôn tập'}>
         <header className="review-workspace-topbar">
           <div><span>KHÔNG GIAN ÔN TẬP</span><h2>{selectedModeInfo?.title || 'Ôn tập'}</h2></div>
-          <span className="review-workspace-level">{cefrLevel || 'A1'}</span>
+          <div className="review-workspace-topbar-actions"><span className="review-workspace-level">{cefrLevel || 'A1'}</span><button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button></div>
         </header>
         <div className="review-workspace-activity">{activity}</div>
       </section>
@@ -4118,7 +4147,6 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
       <QuizSetup
         profile={profile}
         mistakeCount={mistakeCount}
-        onBack={() => handleActivityExit('setup')}
         onStart={(cfg) => {
           setQuiz(cfg)
           setMode('quiz')
@@ -4187,7 +4215,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
   if (mode === 'match') return workspace(<MatchGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={() => handleActivityExit('setup')} />)
   if (mode === 'writing') return workspace(<WritingPracticeScreen profileId={profileId} profile={profile} cefrLevel={cefrLevel} onEvaluated={refreshProgress} />)
 
-  return workspace(<QuizSetup profile={profile} mistakeCount={mistakeCount} onBack={() => handleActivityExit('setup')} onStart={(cfg) => { setQuiz(cfg); setMode('quiz') }} />)
+  return workspace(<QuizSetup profile={profile} mistakeCount={mistakeCount} onStart={(cfg) => { setQuiz(cfg); setMode('quiz') }} />)
 }
 
 const progressStyles = {
@@ -4457,7 +4485,7 @@ function SkillMap({ skills, focuses = [] }) {
   )
 }
 
-function ProgressScreen({ profileId, profile, onExit, onStartAssessment }) {
+function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenStructures }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [insight, setInsight] = useState('')
@@ -4503,7 +4531,7 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment }) {
           <h2>Bắt đầu từ một bài đánh giá</h2>
           <p>Chưa có dữ liệu học tập. Bạn có thể làm bài đánh giá tổng quát để bắt đầu theo dõi.</p>
           <button type="button" className="progress-action" onClick={() => onStartAssessment(null)}>Làm bài đánh giá tổng quát <Icon name="next" size={16} /></button>
-          <small>30 câu ngữ pháp, từ vựng và đọc hiểu. Điểm là thang tham khảo nội bộ, không phải chứng chỉ CEFR.</small>
+          <small>40 câu ngữ pháp, từ vựng và đọc hiểu. Điểm là thang tham khảo nội bộ, không phải chứng chỉ CEFR.</small>
         </div>
       </>
     )
@@ -4545,7 +4573,7 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div>
             <div style={progressStyles.cardTitle}>Bài đánh giá tổng quát</div>
-            <div style={progressStyles.cardSub}>30 câu · ngữ pháp, từ vựng và đọc hiểu · dễ đến khó</div>
+            <div style={progressStyles.cardSub}>40 câu · ngữ pháp, từ vựng và đọc hiểu · dễ đến khó</div>
           </div>
           <button className="qprimary" style={{ ...quizStyles.primary, whiteSpace: 'nowrap', padding: '8px 13px', fontSize: fs(12), minHeight: 'unset' }} onClick={() => onStartAssessment(assessments[0] || null)}>
             {assessments.length ? (data.assessmentDue ? 'Đánh giá lại · đến hạn' : 'Làm lại bài đánh giá') : 'Bắt đầu đánh giá'}
@@ -4588,21 +4616,49 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment }) {
                 <div style={progressStyles.cardTitle}>Gợi ý luyện tập</div>
                 <div style={{ color: 'var(--text-muted)', fontSize: fs(11) }}>Từ lần đánh giá gần nhất</div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '7px' }}>
+              <div style={{ display: 'grid', gap: '7px' }}>
                 {signals.map((signal) => {
                   const tone = signal.status === 'practice' ? 'var(--danger)' : 'var(--text-muted)'
                   const status = signal.status === 'practice' ? 'Cần củng cố' : signal.status === 'limited' ? 'Cần thêm dữ liệu' : 'Đang theo dõi'
-                  return <div key={signal.skill} style={{ minWidth: 0, padding: '9px 11px', borderRadius: '10px', border: '1px solid var(--border-soft)', background: 'var(--surface)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                      <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: fs(12) }} title={signal.label}>{signal.label}</strong>
-                      <span style={{ color: tone, fontSize: fs(11), whiteSpace: 'nowrap' }}>{signal.correct}/{signal.total}</span>
+                  const weakFocuses = signal.weakFocuses?.length
+                    ? signal.weakFocuses
+                    : signal.correct < signal.total
+                      ? [{ focus: signal.focus || signal.label, correct: null, total: null }]
+                      : []
+                  return <details key={signal.skill} style={{ minWidth: 0, padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-soft)', background: 'var(--surface)' }}>
+                    <summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', cursor: 'pointer', listStyle: 'none' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <Icon name="next" size={12} />
+                        <strong style={{ fontSize: fs(12) }}>{signal.label}</strong>
+                        <span style={{ color: 'var(--text-muted)', fontSize: fs(11) }}>{weakFocuses.length} chủ điểm cần luyện</span>
+                      </span>
+                      <span style={{ color: tone, fontSize: fs(11), whiteSpace: 'nowrap' }}>{signal.correct}/{signal.total} · {status}</span>
+                    </summary>
+                    <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: '10px', paddingTop: '8px' }}>
+                      {weakFocuses.length ? weakFocuses.map((focus) => <div key={focus.focus} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '6px 0', fontSize: fs(12) }}>
+                        <span style={{ overflowWrap: 'anywhere' }}>{focus.focus}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                          <span style={{ color: 'var(--danger)', whiteSpace: 'nowrap' }}>{focus.total == null ? 'Cần ôn lại' : `${focus.correct}/${focus.total} đúng`}</span>
+                          <button type="button" className="qghost" style={{ ...quizStyles.ghost, padding: '5px 9px', minHeight: 'unset', fontSize: fs(11) }} onClick={() => onOpenStructures(structureIdForFocus(signal.skill, focus.focus))}>Học chủ điểm <Icon name="next" size={12} /></button>
+                        </span>
+                      </div>) : <div style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>Chưa có câu sai trong chủ điểm này.</div>}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginTop: '4px', fontSize: fs(11) }}>
-                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-muted)' }} title={signal.focus}>{signal.focus}</span>
-                      <span style={{ color: tone, flexShrink: 0 }}>{status}</span>
-                    </div>
-                  </div>
+                  </details>
                 })}
+              </div>
+            </div>}
+
+            {latest.incorrectQuestions?.length > 0 && <div style={{ marginTop: '18px' }}>
+              <div style={{ ...progressStyles.cardTitle, marginBottom: '8px' }}>Câu cần luyện lại ({latest.incorrectQuestions.length})</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '9px' }}>
+                {latest.incorrectQuestions.map((item) => <article key={item.number} style={{ minWidth: 0, padding: '12px 14px', border: '1px solid var(--border-soft)', borderRadius: '11px', background: 'var(--surface)' }}>
+                  <div style={{ color: 'var(--text-muted)', fontSize: fs(11), marginBottom: '5px' }}>Câu {item.number}{item.focus ? ` · ${item.focus}` : ''}</div>
+                  <strong style={{ display: 'block', color: 'var(--text-strong)', fontSize: fs(12), lineHeight: 1.5 }}>{item.question}</strong>
+                  {item.passage && <details style={{ color: 'var(--text-muted)', fontSize: fs(11), marginTop: '6px' }}><summary style={{ cursor: 'pointer' }}>Xem đoạn đọc</summary><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: '6px 0 0' }}>{item.passage}</p></details>}
+                  {item.picked >= 0 && item.options[item.picked] && <div style={{ color: 'var(--danger)', fontSize: fs(11), marginTop: '7px' }}>Bạn chọn: {item.options[item.picked]}</div>}
+                  <div style={{ color: 'var(--accent-text)', fontSize: fs(11), marginTop: '4px' }}>Đáp án: {item.options[item.answer] || 'Chưa có'}</div>
+                  {item.explanation && <div style={{ color: 'var(--text-muted)', fontSize: fs(11), lineHeight: 1.5, marginTop: '5px' }}>{item.explanation}</div>}
+                </article>)}
               </div>
             </div>}
 
@@ -5135,7 +5191,7 @@ function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
           style={vocabStyles.cardSpeak}
           onClick={(e) => {
             e.stopPropagation()
-            speakText(card.word, speakLang, undefined, speechVoice)
+            speakFlashcardWord(card.word, speakLang, speechVoice)
           }}
           title="Nghe phát âm"
         >
@@ -5520,7 +5576,6 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
         >
           <Icon name="sparkle" size={16} /> {aiBusy ? 'AI đang xếp...' : `AI phân loại (${unclassified})`}
         </button>
-        <button className="explorer-back" type="button" onClick={onExit}><Icon name="back" size={16} /> Quay lại luyện tập</button>
       </aside>
 
       {/* ===== Khu vực giữa: các thẻ ===== */}
@@ -5550,6 +5605,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
           >
             <Icon name="cards" size={15} /> Học thẻ
           </button>
+          <button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button>
         </div>
 
         {showAdd && (
@@ -5632,7 +5688,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
           <div style={{ ...settingsStyles.modal, width: '420px' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
               <div style={{ fontSize: fs(24), fontWeight: '700', color: 'var(--text-strong)', flex: 1, wordBreak: 'break-word' }}>{detail.word}</div>
-              <button style={vocabStyles.cardSpeak} onClick={() => speakText(detail.word, speakLang, undefined, speechVoice)} title="Nghe phát âm">
+              <button style={vocabStyles.cardSpeak} onClick={() => speakFlashcardWord(detail.word, speakLang, speechVoice)} title="Nghe phát âm">
                 <Icon name="speaker" size={16} />
               </button>
               <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setDetail(null)}>
@@ -5756,8 +5812,8 @@ function VoiceTurnReview({ reviews, speechLang, speechVoice, onComplete }) {
   return <section ref={cardRef} className="voice-turn-review" aria-label="Ôn lại từng câu sau phiên nói">
     <div className="voice-turn-review-top"><span>ÔN LẠI SAU PHIÊN</span><strong>Câu {index + 1}/{reviews.length}</strong></div>
     <div className="voice-turn-review-meter"><span style={{ width: `${(index + 1) / reviews.length * 100}%` }} /></div>
-    <h2>{current.needsRepeat ? 'Nói lại câu đã sửa' : 'Câu này đã đúng'}</h2>
-    <p className="voice-turn-review-intro">AI đã xem toàn bộ {reviews.length} câu bạn trả lời. {correctedCount} câu cần luyện lại.</p>
+    <h2>{current.reviewUnavailable ? 'Chưa kiểm tra được câu này' : current.needsRepeat ? 'Nói lại câu đã sửa' : 'Câu này đã đúng'}</h2>
+    <p className="voice-turn-review-intro">Đã ghi nhận {reviews.length} câu bạn trả lời. {correctedCount} câu cần luyện lại.</p>
     <div className="voice-turn-review-line"><span>BẠN ĐÃ NÓI</span><p>{current.original}</p></div>
     {current.needsRepeat ? <>
       <div className="voice-turn-review-line voice-turn-review-target"><span>CÂU CẦN NÓI LẠI</span><p>{current.corrected}</p></div>
@@ -5771,7 +5827,7 @@ function VoiceTurnReview({ reviews, speechLang, speechVoice, onComplete }) {
       {heard && <div className="voice-turn-review-heard"><span>MIC NHẬN ĐƯỢC</span><p>{heard}</p></div>}
       {notice && <div className={`voice-turn-review-status ${matched ? 'voice-turn-review-success' : ''}`} role="status">{notice}</div>}
       <p className="voice-turn-review-note">So khớp câu do Whisper nhận diện với câu đã sửa; không chấm âm vị hay dấu câu trong lời nói.</p>
-    </> : <p className="voice-turn-review-note">Không có lỗi ngữ pháp rõ ràng trong câu này.</p>}
+    </> : <p className="voice-turn-review-note">{current.reviewUnavailable ? 'AI chưa kiểm tra được câu này. Bạn có thể tiếp tục xem nhận xét chung của phiên.' : 'Không có lỗi ngữ pháp rõ ràng trong câu này.'}</p>}
     <button type="button" className="voice-turn-review-next" onClick={next} disabled={current.needsRepeat && !matched}>{index + 1 === reviews.length ? 'Xem nhận xét phiên nói' : 'Câu tiếp theo'} <Icon name="next" size={15} /></button>
   </section>
 }
@@ -5830,6 +5886,14 @@ function MistakeNotebook({ mistakes, onBack, onPractice }) {
   const [filter, setFilter] = useState('all')
   const [category, setCategory] = useState('all')
   const [copiedId, setCopiedId] = useState(null)
+  const categoryMenuRef = useRef(null)
+  useEffect(() => {
+    const closeCategoryMenu = (event) => {
+      if (categoryMenuRef.current && !categoryMenuRef.current.contains(event.target)) categoryMenuRef.current.open = false
+    }
+    document.addEventListener('pointerdown', closeCategoryMenu)
+    return () => document.removeEventListener('pointerdown', closeCategoryMenu)
+  }, [])
   const today = todayLocal()
   const due = (mistake) => !mistake.next_review_at || mistake.next_review_at.slice(0, 10) <= today
   const dueCount = mistakes.filter(due).length
@@ -5874,10 +5938,12 @@ function MistakeNotebook({ mistakes, onBack, onPractice }) {
             <div><span className="mistake-notebook-eyebrow">NHẬT KÝ HỌC TẬP</span><h2>Các lỗi của bạn <small>{shown.length}/{mistakes.length}</small></h2></div>
             <div className="mistake-notebook-controls">
               <input type="search" aria-label="Tìm lỗi sai" placeholder="Tìm câu hoặc lỗi…" value={query} onChange={(event) => setQuery(event.target.value)} />
-              <select aria-label="Lọc theo chủ điểm" value={category} onChange={(event) => setCategory(event.target.value)}>
-                <option value="all">Mọi chủ điểm</option>
-                {categories.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
+              <details className="mistake-notebook-select" ref={categoryMenuRef} onKeyDown={(event) => { if (event.key === 'Escape') categoryMenuRef.current.open = false }}>
+                <summary aria-label="Lọc theo chủ điểm">{category === 'all' ? 'Mọi chủ điểm' : category}<span className="mistake-notebook-select-arrow" aria-hidden="true" /></summary>
+                <div className="mistake-notebook-select-menu" role="group" aria-label="Chọn chủ điểm">
+                  {[['all', 'Mọi chủ điểm'], ...categories.map((item) => [item, item])].map(([value, label]) => <button key={value} type="button" className={category === value ? 'active' : ''} onClick={() => { setCategory(value); categoryMenuRef.current.open = false }}>{label}</button>)}
+                </div>
+              </details>
             </div>
           </div>
           <div className="mistake-notebook-filters" role="group" aria-label="Lọc theo lịch ôn">
@@ -5968,6 +6034,7 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [reviewInitialMode, setReviewInitialMode] = useState('setup')
   const [showVocab, setShowVocab] = useState(false)
   const [showStructures, setShowStructures] = useState(false)
+  const [initialStructureId, setInitialStructureId] = useState(null)
   const [showProgress, setShowProgress] = useState(false)
   const [showAssessment, setShowAssessment] = useState(false)
   const [assessmentBaseline, setAssessmentBaseline] = useState(null)
@@ -6630,6 +6697,9 @@ const endVoiceChatSession = async () => {
     if (sessionId !== voiceSessionIdRef.current) return
     turns = responseTurns || [...voiceChatHistory, { role: 'user', text: pending }]
   }
+  setVoiceChatMode('free')
+  setVoiceStructureFocus(null)
+  setActiveVoiceGrammarFocus(null)
   setVoiceSessionTurns(turns)
   if (!turns.some((turn) => turn.role === 'user' && turn.text?.trim())) {
     setVoiceSessionFeedbackLoading(false)
@@ -6767,7 +6837,15 @@ const startVoiceChatSession = (sessionOptions = null) => {
     setVoiceError('')
     voiceModeRef.current = true
     setVoiceMode(true)
-    void handleSendMessage('', { voiceKickoff: true, voiceScenarioPrompt: '', voiceGrammarFocus: focus })
+    const opening = structure.id === 'cond_1'
+      ? "Hi! Today I'm going to help you practice the first conditional. We use it for a real future possibility: if plus the present simple, then will plus a verb. For example, 'If it rains, we will stay at home.' What will you do if it rains tomorrow?"
+      : `Hi! Today I'm going to help you practice this sentence pattern. Here's an example: '${structure.examples?.[0]?.[0] || ''}' Can you make a similar sentence?`
+    setVoiceChatHistory([{ role: 'model', text: opening, mistakes: [] }])
+    setIsVoiceSpeaking(true)
+    speakNaturalText(opening, speechLang, () => {
+      setIsVoiceSpeaking(false)
+      scheduleVoiceRestart()
+    }, settings.speechVoice)
     return
   }
   setActiveVoiceGrammarFocus(null)
@@ -7155,7 +7233,8 @@ if (showVocab) {
         profile={profile}
         cefrLevel={placementResult?.level || 'A1'}
         speechVoice={settings.speechVoice}
-        onExit={() => setShowStructures(false)}
+        initialStructureId={initialStructureId}
+        onExit={() => { setShowStructures(false); setInitialStructureId(null) }}
         onStartSpeaking={(structure) => {
           stopVoicePractice()
           setVoiceStructureFocus(structure)
@@ -7175,9 +7254,10 @@ if (showVocab) {
         profile={profile}
         cefrLevel={placementResult?.level || 'A1'}
         label="Bài đánh giá tổng quát"
-        count={15}
+        count={40}
         attemptMode="assessment"
         previousAssessment={assessmentBaseline}
+        onLevelPromoted={(level) => setPlacementResult((current) => ({ ...current, level }))}
         loader={() => window.api.generateAssessmentQuiz({
           profileId,
           targetLanguage: profile.targetLanguage,
@@ -7195,6 +7275,7 @@ if (showVocab) {
         profileId={profileId}
         profile={profile}
         onExit={() => setShowProgress(false)}
+        onOpenStructures={(structureId) => { setInitialStructureId(structureId); setShowProgress(false); setShowStructures(true) }}
         onStartAssessment={(attempt) => {
           setAssessmentBaseline(attempt)
           setShowAssessment(true)
@@ -7236,19 +7317,14 @@ if (showVoiceChat) {
             <p>{voiceMode ? 'Tình huống đang dùng trong phiên này.' : 'Chọn cách luyện trước khi bắt đầu.'}</p>
           </div>
           {!voiceMode ? <>
-            <div className={`voice-mode-tabs voice-sidebar-tabs ${voiceStructureFocus ? 'voice-sidebar-tabs-four' : ''}`} role="tablist" aria-label="Loại hội thoại">
+            <div className="voice-mode-tabs voice-sidebar-tabs" role="tablist" aria-label="Loại hội thoại">
               <button type="button" role="tab" aria-selected={voiceChatMode === 'free'} className={voiceChatMode === 'free' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('free'); setVoiceError('') }}>Tự do</button>
               <button type="button" role="tab" aria-selected={voiceChatMode === 'scenario'} className={voiceChatMode === 'scenario' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('scenario'); setVoiceError('') }}>Có sẵn</button>
               <button type="button" role="tab" aria-selected={voiceChatMode === 'custom'} className={voiceChatMode === 'custom' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('custom'); setVoiceError('') }}>Tự tạo</button>
-              {voiceStructureFocus && <button type="button" role="tab" aria-selected={voiceChatMode === 'structure'} className={voiceChatMode === 'structure' ? 'voice-mode-tab active' : 'voice-mode-tab'} onClick={() => { setVoiceChatMode('structure'); setVoiceError('') }}>Mẫu câu</button>}
             </div>
             {voiceChatMode === 'free' && <div className="voice-mode-detail voice-sidebar-detail">
               <strong>Trò chuyện tự do</strong>
               <span>Nói về bất cứ điều gì; AI sẽ trò chuyện tự nhiên và ngắn gọn.</span>
-            </div>}
-            {voiceChatMode === 'structure' && voiceStructureFocus && <div className="voice-mode-detail voice-sidebar-detail">
-              <strong>{voiceStructureFocus.title}</strong>
-              <span>AI sẽ đưa ví dụ, hỏi bạn một câu mỗi lượt và giúp bạn dùng mẫu này trong hội thoại.</span>
             </div>}
             {voiceChatMode === 'scenario' && <div className="voice-scenario-picker">
               <label className="voice-scenario-search"><Icon name="search" size={14} /><input value={voiceScenarioSearch} onChange={(event) => {
@@ -7283,7 +7359,7 @@ if (showVoiceChat) {
             </div>}
             {voiceError && <div className="voice-sidebar-error" role="alert">{voiceError}</div>}
             {voiceTurnReviews.length > 0 && !voiceReviewDone && <p className="voice-sidebar-review-notice">Hoàn thành phần nói lại ở giữa màn hình trước khi bắt đầu phiên khác.</p>}
-            <button type="button" className="voice-mode-start voice-sidebar-start" onClick={startVoiceChatSession} disabled={!voiceInput.supported || voiceSessionFeedbackLoading || (voiceTurnReviews.length > 0 && !voiceReviewDone) || (voiceChatMode === 'custom' && !customVoiceScenario.trim()) || (voiceChatMode === 'scenario' && !visibleVoiceScenarios.length) || (voiceChatMode === 'structure' && !voiceStructureFocus)}>
+            <button type="button" className="voice-mode-start voice-sidebar-start" onClick={startVoiceChatSession} disabled={!voiceInput.supported || voiceSessionFeedbackLoading || (voiceTurnReviews.length > 0 && !voiceReviewDone) || (voiceChatMode === 'custom' && !customVoiceScenario.trim()) || (voiceChatMode === 'scenario' && !visibleVoiceScenarios.length)}>
               Bắt đầu phiên <Icon name="next" size={15} />
             </button>
           </> : <div className="voice-current-scenario">
@@ -7310,7 +7386,7 @@ if (showVoiceChat) {
           <div className="voice-header-actions">
             {voiceMode && <button type="button" className="voice-end-session" onClick={endVoiceChatSession} disabled={isChatLoading || isVoiceSpeaking || voiceSessionFeedbackLoading || voiceSpeakingHintLoading}>Kết thúc phiên</button>}
             <button type="button" className="voice-header-helper-button" aria-expanded={voiceHelperOpen} aria-controls="voice-speaking-helper-panel" onClick={() => setVoiceHelperOpen((open) => !open)}><Icon name="sparkle" size={16} /><span>Trợ giúp AI</span></button>
-            <button type="button" className="voice-back-button" onClick={() => { stopVoicePractice(); setShowVoiceChat(false) }}><Icon name="back" size={16} /><span>Quay lại</span></button>
+            <button type="button" className="voice-back-button" onClick={() => { stopVoicePractice(); setVoiceChatMode('free'); setVoiceStructureFocus(null); setShowVoiceChat(false) }}><Icon name="back" size={16} /><span>Quay lại</span></button>
           </div>
         </header>
 
@@ -7705,7 +7781,7 @@ return (
         <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowVocab(true) }}>
           <Icon name="cards" size={17} /> Từ vựng
         </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowStructures(true) }}>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setInitialStructureId(null); setShowStructures(true) }}>
           <Icon name="layers" size={17} /> Cấu trúc câu
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowProgress(true) }}>
