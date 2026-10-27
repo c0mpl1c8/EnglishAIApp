@@ -1,3 +1,4 @@
+import './assets/manrope.css'
 import './assets/main.css'
 import './assets/ui-refresh.css'
 

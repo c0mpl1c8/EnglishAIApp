@@ -108,6 +108,37 @@ db.exec(`
   )
 `)
 addColumnIfMissing('skill_events', 'focus', 'TEXT')
+addColumnIfMissing('skill_events', 'difficulty', 'TEXT')
+addColumnIfMissing('skill_events', 'strategy', 'TEXT')
+db.exec(`
+  CREATE TABLE IF NOT EXISTS learning_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    skill TEXT NOT NULL,
+    focus TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    correct INTEGER NOT NULL DEFAULT 0,
+    repetitions INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    interval_days INTEGER NOT NULL DEFAULT 0,
+    next_review_at TEXT,
+    last_outcome INTEGER,
+    last_strategy TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(profile_id, skill, focus)
+  )
+`)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS writing_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    prompt TEXT,
+    response TEXT NOT NULL,
+    rubric TEXT NOT NULL,
+    overall INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 db.exec(`
   CREATE TABLE IF NOT EXISTS quiz_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

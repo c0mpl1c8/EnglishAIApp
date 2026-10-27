@@ -218,3 +218,4 @@ test('spoken replies are cleaned and use the requested language', () => {
   spoken.onend()
   assert.equal(finished, true)
 })
+

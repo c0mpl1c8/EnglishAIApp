@@ -1,5 +1,27 @@
 export function cleanSpeechText(text) {
-  return String(text ?? '')
+  let speechText = String(text ?? '').trim()
+
+  // Some model/API paths return the complete structured response instead of
+  // the reply string. Never send JSON syntax or its metadata to the TTS engine.
+  const candidate = speechText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+  if (/^[{[]/.test(candidate)) {
+    try {
+      const parsed = JSON.parse(candidate)
+      if (typeof parsed === 'string') speechText = parsed
+      else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const reply = ['reply', 'text', 'content', 'message']
+          .map((key) => parsed[key])
+          .find((value) => typeof value === 'string' && value.trim())
+        speechText = reply || ''
+      } else speechText = ''
+    } catch {
+      // A JSON-like but malformed response is not useful speech. In particular,
+      // don't make the device read braces and field names character by character.
+      speechText = ''
+    }
+  }
+
+  return speechText
     .replace(/\*\*/g, '')
     .replace(/\([^()]*\)/g, '')
     .replace(/\s+/g, ' ')
