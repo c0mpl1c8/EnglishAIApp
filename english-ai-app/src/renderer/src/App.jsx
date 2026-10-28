@@ -1,6 +1,8 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
-import { cleanSpeechText, createAudioSpeechCapture, decodeSpeechAudio, playSpeechAudio, speakText as speakSpeechText, speechErrorMessage, stopSpeechAudio } from './voice/speech.mjs'
+import { chunkSpeechText, cleanRepeatedTranscript, cleanSpeechText, createAudioSpeechCapture, decodeSpeechAudio, playSpeechAudio, setSpeechPlaybackRate, speakText as speakSpeechText, speechErrorMessage, stopSpeechAudio } from './voice/speech.mjs'
 import { matchesSpokenSentence } from './voice/answer.mjs'
+import { isListeningAnswerCorrect } from './voice/listening.mjs'
+import { selectVoiceContextHistory } from './voice/history.mjs'
 
 const fs = (px) => `calc(${px}px * var(--fs))`
 
@@ -115,6 +117,10 @@ const iconPaths = {
   hotel: ['M3 21V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v16', 'M3 14h18', 'M7 14v-3h4v3', 'M14 14v-3h4v3', 'M8 7h.01', 'M12 7h.01', 'M16 7h.01'],
   users: ['M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M20 21v-2a4 4 0 0 0-3-3.87', 'M16 3.13a4 4 0 0 1 0 7.75'],
   speaker: ['M11 5 6 9H2v6h4l5 4V5z', 'M19.07 4.93a10 10 0 0 1 0 14.14', 'M15.54 8.46a5 5 0 0 1 0 7.07'],
+  pause: ['M9 5v14', 'M15 5v14'],
+  pin: ['M16 3 21 8l-3 1-3 3v4l-2 2-5-5 2-2h4l3-3 1-3z', 'M8 16l-5 5'],
+  play: ['m8 5 11 7-11 7V5z'],
+  stop: ['M5 5h14v14H5z'],
   cards: ['M3 9h14v10H3z', 'M7 9V5a2 2 0 0 1 2-2h12v14h-2'],
   flame: ['M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z']
 }
@@ -289,7 +295,14 @@ async function speakNaturalText(text, lang, onEnd, voice = 'af_heart', onFallbac
         const result = await window.api.synthesizeSpeechLocal({ text: speechText, voice, speed })
         if (requestId !== naturalSpeechRequest) return false
         if (result?.success && result.audio?.length) {
-          return playSpeechAudio({ environment: window, audio: result.audio, sampleRate: result.sampleRate, onEnd })
+          let playbackStarted = false
+          playbackStarted = playSpeechAudio({ environment: window, audio: result.audio, sampleRate: result.sampleRate, onEnd: () => {
+            if (playbackStarted && requestId === naturalSpeechRequest) onEnd?.()
+          } })
+          if (playbackStarted) return true
+          if (requestId !== naturalSpeechRequest) return false
+          console.warn('Local AI speech playback failed; using the device voice.')
+          onFallback?.()
         }
         const error = result?.error || 'LOCAL_TTS_FAILED'
         console.warn('Local AI speech synthesis failed; using the device voice.', error)
@@ -344,12 +357,12 @@ function getVoiceSpeechText(text, nativeLanguage) {
 }
 
 const topicOptions = [
-  { id: 'free', label: 'Tự do (không chủ đề)' },
-  { id: 'gọi món ăn ở nhà hàng', label: '🍽️ Gọi món ăn' },
-  { id: 'hỏi đường và đi du lịch', label: '🧭 Hỏi đường & du lịch' },
-  { id: 'phỏng vấn xin việc', label: '💼 Phỏng vấn xin việc' },
-  { id: 'trò chuyện xã giao hàng ngày', label: '💬 Giao tiếp hàng ngày' },
-  { id: 'mua sắm ở cửa hàng', label: '🛍️ Mua sắm' }
+  { id: 'free', label: 'Trò chuyện tự do', description: 'Bắt đầu với bất kỳ điều gì bạn muốn hỏi.', icon: 'sparkle' },
+  { id: 'gọi món ăn ở nhà hàng', label: 'Gọi món ăn', description: 'Luyện cách gọi món và hỏi về thực đơn.', icon: 'restaurant' },
+  { id: 'hỏi đường và đi du lịch', label: 'Hỏi đường & du lịch', description: 'Hỏi đường và trao đổi khi đi du lịch.', icon: 'compass' },
+  { id: 'phỏng vấn xin việc', label: 'Phỏng vấn xin việc', description: 'Tập trả lời những câu hỏi phỏng vấn.', icon: 'user' },
+  { id: 'trò chuyện xã giao hàng ngày', label: 'Giao tiếp hàng ngày', description: 'Luyện những cuộc trò chuyện thường gặp.', icon: 'users' },
+  { id: 'mua sắm ở cửa hàng', label: 'Mua sắm', description: 'Hỏi giá, kích cỡ và thanh toán.', icon: 'shopping' }
 ]
 
 const voiceRoleplayScenarios = [
@@ -460,7 +473,75 @@ const voiceRoleplayScenarios = [
     description: 'Rủ bạn bè đi chơi và thống nhất thời gian.',
     prompt: 'You are the learner’s friend. Suggest a simple weekend activity, ask for their preferences, and agree on a time and place through casual short turns.',
     openingLine: 'Hey! Do you want to do something together this weekend?'
+  },
+  {
+    id: 'grocery', title: 'Ở siêu thị', icon: '🛒',
+    description: 'Tìm sản phẩm, hỏi vị trí và giá.',
+    prompt: 'You are a supermarket employee. The learner is shopping for ingredients. Help them find an item, compare a simple option, and ask one short question at a time.',
+    openingLine: 'Hi! Can I help you find something?'
+  },
+  {
+    id: 'bakery', title: 'Ở tiệm bánh', icon: '🥐',
+    description: 'Chọn bánh, hỏi thành phần và thanh toán.',
+    prompt: 'You are a bakery assistant. The learner is a customer. Help them choose a pastry, answer a simple ingredients question, and complete the order naturally.',
+    openingLine: 'Good morning! What would you like today?'
+  },
+  {
+    id: 'taxi', title: 'Đi taxi', icon: '🚕',
+    description: 'Nói điểm đến và hỏi thời gian đi.',
+    prompt: 'You are a taxi driver. The learner is your passenger. Ask for the destination, confirm the address, and discuss the route or travel time in short natural turns.',
+    openingLine: 'Hello! Where would you like to go?'
+  },
+  {
+    id: 'train', title: 'Mua vé tàu', icon: '🚆',
+    description: 'Chọn chuyến, giờ khởi hành và vé.',
+    prompt: 'You are a train station ticket clerk. The learner wants to buy a train ticket. Ask about destination, travel date, and departure time one question at a time.',
+    openingLine: 'Hi! Where are you traveling to?'
+  },
+  {
+    id: 'museum', title: 'Ở bảo tàng', icon: '🏛️',
+    description: 'Hỏi về vé, giờ mở cửa và khu trưng bày.',
+    prompt: 'You are a museum information desk employee. The learner is a visitor. Answer questions about tickets, opening hours, and exhibits in a friendly, concise way.',
+    openingLine: 'Welcome! What would you like to see today?'
+  },
+  {
+    id: 'classmate', title: 'Gặp bạn cùng lớp', icon: '📚',
+    description: 'Làm quen và hỏi về môn học.',
+    prompt: 'You are a classmate meeting the learner before an English class. Chat about the class, homework, and study plans in natural short turns. Do not teach unless asked.',
+    openingLine: 'Hi! Are you in this class too?'
+  },
+  {
+    id: 'meeting', title: 'Họp nhóm', icon: '👥',
+    description: 'Nêu ý kiến và thống nhất việc cần làm.',
+    prompt: 'You are a teammate in a short project meeting. The learner is another team member. Ask for their opinion, clarify one task, and agree on a simple next step.',
+    openingLine: 'Thanks for joining. What should we work on first?'
+  },
+  {
+    id: 'library', title: 'Ở thư viện', icon: '📖',
+    description: 'Tìm sách và hỏi cách mượn.',
+    prompt: 'You are a librarian. The learner wants to find and borrow a book. Ask about the book or topic, explain where to look, and discuss borrowing briefly.',
+    openingLine: 'Hello! What kind of book are you looking for?'
+  },
+  {
+    id: 'bank', title: 'Ở ngân hàng', icon: '🏦',
+    description: 'Hỏi dịch vụ cơ bản và giấy tờ cần có.',
+    prompt: 'You are a bank receptionist in a language practice role-play. The learner asks about a basic service. Ask what they need and give general procedural information only; do not provide financial advice.',
+    openingLine: 'Good morning. How can I help you today?'
+  },
+  {
+    id: 'repair', title: 'Báo đồ bị hỏng', icon: '🛠️',
+    description: 'Mô tả sự cố và hẹn thời gian sửa.',
+    prompt: 'You are a customer service representative for home repairs. The learner needs to report a broken appliance. Ask what happened and arrange a convenient visit, one question at a time.',
+    openingLine: 'Hello, what seems to be the problem?'
   }
+]
+
+const voiceScenarioGroups = [
+  { title: 'Giao tiếp hằng ngày', ids: ['new-friend', 'weekend-plan', 'cafe', 'cinema'] },
+  { title: 'Ăn uống và mua sắm', ids: ['restaurant', 'shopping', 'grocery', 'bakery'] },
+  { title: 'Du lịch và di chuyển', ids: ['directions', 'hotel', 'airport', 'bus', 'taxi', 'train', 'museum'] },
+  { title: 'Công việc và học tập', ids: ['interview', 'first-day', 'classmate', 'meeting', 'library'] },
+  { title: 'Dịch vụ và tình huống', ids: ['appointment', 'lost-item', 'post-office', 'pharmacy', 'bank', 'repair'] }
 ]
 
 const voiceScenarioIconNames = {
@@ -472,7 +553,10 @@ const voiceScenarioIconNames = {
   'new-friend': 'users',
   airport: 'send', bus: 'compass', pharmacy: 'plus', cinema: 'cards',
   interview: 'user', appointment: 'clock', 'lost-item': 'search',
-  'first-day': 'users', 'post-office': 'folder', 'weekend-plan': 'coffee'
+  'first-day': 'users', 'post-office': 'folder', 'weekend-plan': 'coffee',
+  grocery: 'shopping', bakery: 'coffee', taxi: 'compass', train: 'send',
+  museum: 'layers', classmate: 'users', meeting: 'users', library: 'cards',
+  bank: 'folder', repair: 'edit'
 }
 
 const DAILY_GOAL = 5
@@ -1261,7 +1345,7 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>
           Hôm nay bạn đã ôn hết rồi. Hãy quay lại vào ngày mai, hoặc trò chuyện thêm để AI ghi nhận thêm lỗi nhé.
         </p>
-        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+        <button className="qprimary icon-only-back" style={quizStyles.primary} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
       </>
     )
   }
@@ -1274,7 +1358,7 @@ function PracticeScreen({ profileId, profile,cefrLevel, onExit }) {
           {correctCount}/{queue.length}
         </div>
         <p style={{ color: 'var(--text-muted)', margin: 0 }}>câu trả lời đúng</p>
-        <button className="qprimary" style={quizStyles.primary} onClick={onExit}>Quay lại</button>
+        <button className="qprimary icon-only-back" style={quizStyles.primary} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
       </>
     )
   }
@@ -1516,6 +1600,8 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
   const [score, setScore] = useState(0)
   const [assessmentAnswers, setAssessmentAnswers] = useState({})
   const [assessmentLevel, setAssessmentLevel] = useState(cefrLevel)
+  const [nextAssessmentLevel, setNextAssessmentLevel] = useState(null)
+  const [a1PassStreak, setA1PassStreak] = useState(0)
   const [promotedLevel, setPromotedLevel] = useState(null)
   const [errMsg, setErrMsg] = useState('')
   const [log, setLog] = useState([])
@@ -1527,6 +1613,8 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
     setLog([])
     setAssessmentAnswers({})
     setPromotedLevel(null)
+    setNextAssessmentLevel(null)
+    setA1PassStreak(0)
     savedRef.current = false
     if (preset) {
       setQuestions(shuffleArr(preset).map(reshuffleQuestion))
@@ -1640,6 +1728,8 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
       setPromotedLevel(saved.promotedLevel)
       onLevelPromoted?.(saved.promotedLevel)
     }
+    setNextAssessmentLevel(saved.nextAssessmentLevel || null)
+    setA1PassStreak(saved.a1PassStreak || 0)
     setPhase('done')
   }
 
@@ -1701,7 +1791,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
         <h2 style={styles.question}>Chưa tạo được bộ câu hỏi</h2>
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>{errMsg}</p>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>Thử lại</button>
         </div>
       </>
@@ -1743,7 +1833,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
       <>
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
-        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{attemptMode === 'assessment' ? pct >= 90 ? promotedLevel ? `Đạt bài ${assessmentLevel}. Trình độ của bạn đã tăng lên ${promotedLevel}.` : assessmentLevel === 'C2' ? 'Đã đạt bài ở mức C2.' : `Đạt bài ${assessmentLevel}. Bài tiếp theo sẽ khó hơn.` : `Chưa đạt 90% ở mức ${assessmentLevel}. Bạn có thể làm một đề mới cùng mức để luyện thêm.` : msg}</p>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{attemptMode === 'assessment' ? pct >= 90 ? promotedLevel ? `Đạt bài ${assessmentLevel}. Trình độ của bạn đã tăng lên ${promotedLevel}.` : assessmentLevel === 'C2' ? 'Đã đạt bài ở mức C2.' : assessmentLevel === 'A1' && nextAssessmentLevel === 'A1' ? `Đạt ${a1PassStreak}/3 bài A1 liên tiếp từ 90% trở lên. Bài tiếp theo vẫn ở mức A1.` : `Đạt bài ${assessmentLevel}. Bài tiếp theo sẽ khó hơn.` : `Chưa đạt 90% ở mức ${assessmentLevel}. Bạn có thể làm một đề mới cùng mức để luyện thêm.` : msg}</p>
         {attemptMode === 'assessment' && (
           <div style={{ ...progressStyles.card, width: '100%', maxWidth: '640px', textAlign: 'left' }}>
             <div style={progressStyles.cardTitle}>Kết quả theo chủ điểm</div>
@@ -1771,9 +1861,9 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
         )}
         {attemptMode === 'assessment' && <p style={{ color: 'var(--text-muted)', margin: 0, fontSize: fs(12), maxWidth: '640px' }}>Đây là thang tham khảo nội bộ của ứng dụng, chưa được chuẩn hóa hoặc chứng nhận như bài thi CEFR. Bài này đánh giá ngữ pháp, từ vựng và cấu trúc; chưa đo kỹ năng nghe/nói.</p>}
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>
-            {preset ? 'Làm lại' : attemptMode === 'assessment' ? pct >= 90 && assessmentLevel !== 'C2' ? 'Làm đề khó hơn' : 'Làm đề khác' : 'Bộ câu hỏi mới'}
+            {preset ? 'Làm lại' : attemptMode === 'assessment' ? nextAssessmentLevel && nextAssessmentLevel !== assessmentLevel ? 'Làm đề khó hơn' : 'Làm đề khác' : 'Bộ câu hỏi mới'}
           </button>
         </div>
       </>,
@@ -2163,7 +2253,7 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
         <h2 style={styles.question}>Chưa tạo được bộ câu hỏi</h2>
         <p style={{ color: 'var(--text-muted)', maxWidth: '380px', margin: 0 }}>{errMsg}</p>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>Thử lại</button>
         </div>
       </>
@@ -2202,8 +2292,8 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
           </div>
         </div>
         <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>
-            <Icon name="back" size={16} /> Quay lại
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại">
+            <Icon name="back" size={16} />
           </button>
           <button className="qprimary" style={quizStyles.primary} onClick={start}>
             Bắt đầu <Icon name="next" size={16} />
@@ -2241,7 +2331,7 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
           {asked.map((d, i) => <ReviewCard key={i} d={d} n={i + 1} />)}
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>Bộ mới</button>
         </div>
       </>,
@@ -2485,8 +2575,8 @@ function QuizHistory({ profileId, onBack, onRetry }) {
         </div>
       )}
 
-      <button className="qghost" style={{ ...quizStyles.ghost, marginBottom: '16px' }} onClick={onBack}>
-        <Icon name="back" size={16} /> Quay lại
+      <button className="qghost icon-only-back" style={{ ...quizStyles.ghost, marginBottom: '16px' }} onClick={onBack} title="Quay lại" aria-label="Quay lại">
+        <Icon name="back" size={16} />
       </button>
     </>
   )
@@ -3468,7 +3558,7 @@ function MatchGame({ profileId, profile, cefrLevel, onExit }) {
         )}
 
         <div style={{ display: 'flex', gap: '10px' }}>
-          <button className="qghost" style={quizStyles.ghost} onClick={onExit}>Quay lại</button>
+          <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qghost" style={quizStyles.ghost} onClick={() => setPhase('setup')}>Đổi chế độ</button>
           <button className="qprimary" style={quizStyles.primary} onClick={startGame}>Chơi lại</button>
         </div>
@@ -3549,9 +3639,9 @@ const STRUCTURES = [
     examples: [['Does she like coffee?', 'Cô ấy có thích cà phê không?'], ['Did they go home?', 'Họ đã về nhà chưa?']] },
   // ===== Các thì =====
   { id: 'present_simple', group: 'Các thì', level: 'A1', skill: 'tense', title: 'Hiện tại đơn',
-    formula: ['S + V(s/es)', 'S + do/does not + V'],
-    use: 'Thói quen, sự thật hiển nhiên, lịch trình cố định.',
-    examples: [['She works in a bank every day.', 'Cô ấy làm việc ở ngân hàng mỗi ngày.'], ['Water boils at 100 degrees.', 'Nước sôi ở 100 độ.']] },
+    formula: ['I / You / We / They + V nguyên mẫu', 'He / She / It + V(s/es)', 'S + do/does not + V nguyên mẫu'],
+    use: 'Diễn tả thói quen, sự thật và lịch trình. Với I/you/we/they, dùng động từ nguyên mẫu; chỉ thêm -s/-es với he/she/it.',
+    examples: [['I like dogs.', 'Tôi thích chó.'], ['She likes dogs.', 'Cô ấy thích chó.']] },
   { id: 'present_continuous', group: 'Các thì', level: 'A1', skill: 'tense', title: 'Hiện tại tiếp diễn',
     formula: ['S + am/is/are + V-ing'],
     use: 'Hành động đang diễn ra lúc nói, hoặc kế hoạch gần đã sắp xếp.',
@@ -3741,7 +3831,7 @@ const structStyles = {
   }
 }
 
-function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialStructureId, onExit, onStartSpeaking }) {
+function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialStructureId, onExit, onStartSpeaking, onStartTextChat }) {
   const [selectedId, setSelectedId] = useState(initialStructureId || STRUCTURES[0].id)
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState('library') // library | quiz
@@ -3848,7 +3938,7 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
       </aside>
 
       <main className="structure-detail" style={structStyles.detail}>
-        <div className="structure-detail-toolbar"><button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button></div>
+        <div className="structure-detail-toolbar"><button className="workspace-main-back" type="button" onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button></div>
         <div className="structure-inner" style={structStyles.inner}>
           <div className="structure-heading">
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
@@ -3925,6 +4015,14 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
                   type="button"
                   className="structure-practice-button structure-practice-button-secondary"
                   disabled={!isEnglish}
+                  onClick={() => onStartTextChat?.(selected)}
+                >
+                  Hỏi AI về mẫu này
+                </button>
+                <button
+                  type="button"
+                  className="structure-practice-button structure-practice-button-secondary"
+                  disabled={!isEnglish}
                   onClick={() => onStartSpeaking?.(selected)}
                 >
                   <Icon name="mic" size={15} /> Luyện nói mẫu này
@@ -3992,7 +4090,153 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
   </div></div>
 }
 
-function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, initialMode = 'setup', onRefresh, onExit, onStartSpeaking }) {
+function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice }) {
+  const [topic, setTopic] = useState('daily')
+  const [lesson, setLesson] = useState(null)
+  const [phase, setPhase] = useState('setup')
+  const [answers, setAnswers] = useState({})
+  const [played, setPlayed] = useState({})
+  const [playing, setPlaying] = useState(null)
+  const [preparing, setPreparing] = useState(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [error, setError] = useState('')
+  const [recent, setRecent] = useState([])
+  const audioCacheRef = useRef(new Map())
+  const playbackRequestRef = useRef(0)
+  const topics = [['daily', 'Hằng ngày'], ['travel', 'Du lịch'], ['work', 'Công việc'], ['shopping', 'Mua sắm']]
+  const speedPreviewText = 'Welcome to your listening practice. Take your time, listen carefully, and enjoy learning something new today.'
+
+  const refreshRecent = async () => {
+    const result = await window.api.getListeningAttempts({ profileId })
+    if (result.success) setRecent(result.attempts || [])
+  }
+  useEffect(() => { void refreshRecent(); return () => { playbackRequestRef.current++; cancelNaturalSpeech() } }, [profileId])
+
+  const createLesson = async () => {
+    cancelNaturalSpeech()
+    playbackRequestRef.current++
+    setPlaying(null)
+    setPreviewing(false)
+    setPreparing(null)
+    for (const key of audioCacheRef.current.keys()) if (!key.startsWith('preview:')) audioCacheRef.current.delete(key)
+    setError('')
+    setPhase('loading')
+    setAnswers({})
+    setPlayed({})
+    let result
+    try { result = await window.api.generateListeningLesson({ targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel, topic }) } catch { result = { success: false } }
+    if (!result.success) { setError(result.message || 'Chưa tạo được bài nghe.'); setPhase('setup'); return }
+    setLesson({ ...result.lesson, questions: result.lesson.sections.flatMap((section) => section.questions) })
+    setPhase('answering')
+  }
+  const play = async (sectionIndex, preview = false) => {
+    const section = lesson?.sections?.[sectionIndex]
+    if (!section) return
+    cancelNaturalSpeech()
+    const request = ++playbackRequestRef.current
+    setError('')
+    setPlaying(null)
+    setPreparing(sectionIndex)
+    setPreviewing(preview)
+    try {
+      const secondVoice = speechVoice?.[1] === 'f' ? 'am_michael' : 'af_heart'
+      const cacheKey = preview ? `preview:${speechVoice}:${speedPreviewText}` : `full:${sectionIndex}:${speechVoice}:${secondVoice}:${section.transcript}`
+      let audio = audioCacheRef.current.get(cacheKey)
+      if (!audio) {
+        const parts = []
+        let sampleRate = null
+        for (const turn of preview ? [{ speaker: 'A', text: speedPreviewText }] : section.turns) {
+          for (const text of chunkSpeechText(turn.text, 180)) {
+            const result = await window.api.synthesizeSpeechLocal({ text, voice: turn.speaker === 'A' ? speechVoice : secondVoice, speed: 1 })
+            if (request !== playbackRequestRef.current) return
+            if (!result.success || !result.audio?.length || (sampleRate && sampleRate !== result.sampleRate)) throw new Error('Audio synthesis failed')
+            sampleRate = result.sampleRate
+            parts.push(result.audio instanceof Float32Array ? result.audio : Float32Array.from(result.audio))
+          }
+          parts.push(new Float32Array(Math.round((sampleRate || 24000) * 0.18)))
+        }
+        const length = parts.reduce((sum, part) => sum + part.length, 0)
+        const samples = new Float32Array(length)
+        let offset = 0
+        for (const part of parts) { samples.set(part, offset); offset += part.length }
+        audio = { samples, sampleRate: sampleRate || 24000 }
+        audioCacheRef.current.set(cacheKey, audio)
+      }
+      if (request !== playbackRequestRef.current) return
+      const started = playSpeechAudio({ environment: window, audio: audio.samples, sampleRate: audio.sampleRate, playbackRate: playbackSpeed, onEnd: () => { if (request === playbackRequestRef.current) { setPlaying(null); setPreviewing(false) } } })
+      setPreparing(null)
+      setPlaying(started ? sectionIndex : null)
+      if (!started) throw new Error('Audio playback failed')
+      if (!preview) setPlayed((current) => ({ ...current, [sectionIndex]: true }))
+    } catch {
+      if (request !== playbackRequestRef.current) return
+      setPreparing(null)
+      setPlaying(null)
+      setPreviewing(false)
+      setError(preview ? 'Không phát được đoạn nghe thử. Hãy thử lại hoặc kiểm tra thiết bị âm thanh.' : 'Không phát được toàn bộ bài nghe. Hãy thử lại hoặc kiểm tra thiết bị âm thanh.')
+    }
+  }
+  const submit = async () => {
+    if (!lesson || !played[0] || !played[1] || lesson.questions.some((question, index) => answers[index] == null || (typeof answers[index] === 'string' && !answers[index].trim()))) return
+    cancelNaturalSpeech()
+    playbackRequestRef.current++
+    setPlaying(null)
+    setPreviewing(false)
+    const correct = lesson.questions.filter((question, index) => isListeningAnswerCorrect(question, answers[index])).length
+    let result
+    try { result = await window.api.saveListeningAttempt({ profileId, level: lesson.level, topic: lesson.topic, title: lesson.title, total: lesson.questions.length, correct }) } catch { result = { success: false } }
+    if (!result.success) setError('Đã chấm bài nhưng chưa lưu được kết quả.')
+    else void refreshRecent()
+    setPhase('result')
+  }
+  const score = lesson?.questions.filter((question, index) => isListeningAnswerCorrect(question, answers[index])).length || 0
+  const answeredCount = lesson?.questions.filter((question, index) => answers[index] != null && (typeof answers[index] !== 'string' || answers[index].trim())).length || 0
+  const questionTypeLabels = { multiple_choice: 'CHỌN ĐÁP ÁN', matching: 'GHÉP THÔNG TIN', note_completion: 'ĐIỀN GHI CHÚ', short_answer: 'TRẢ LỜI NGẮN', sentence_completion: 'HOÀN THÀNH CÂU' }
+  const renderQuestion = (question, index) => {
+    const choice = question.type === 'multiple_choice' || question.type === 'matching'
+    const correct = isListeningAnswerCorrect(question, answers[index])
+    const answerText = choice ? question.options[question.answer] : question.answer
+    return <div className="listening-question" key={index}>
+      <span className="listening-question-type">{questionTypeLabels[question.type] || 'NGHE HIỂU'}</span>
+      <h4>Câu {index + 1}. {question.question}</h4>
+      {choice ? <div className="listening-options">{question.options.map((option, optionIndex) => <button type="button" key={optionIndex} disabled={phase === 'result'} className={`${answers[index] === optionIndex ? 'selected ' : ''}${phase === 'result' && optionIndex === question.answer ? 'correct' : ''}${phase === 'result' && answers[index] === optionIndex && optionIndex !== question.answer ? 'incorrect' : ''}`} onClick={() => setAnswers((current) => ({ ...current, [index]: optionIndex }))}>{option}</button>)}</div> : <input className={`listening-fill-answer${phase === 'result' ? correct ? ' correct' : ' incorrect' : ''}`} type="text" maxLength={80} disabled={phase === 'result'} value={answers[index] || ''} onChange={(event) => setAnswers((current) => ({ ...current, [index]: event.target.value }))} placeholder={question.type === 'short_answer' ? 'Tối đa 3 từ' : 'Nhập từ hoặc số'} aria-label={`Câu trả lời câu ${index + 1}`} />}
+      {phase === 'result' && <p className="listening-explanation">{correct ? 'Đúng. ' : `Đáp án: ${answerText}. `}{question.explanation}</p>}
+    </div>
+  }
+
+  return <div className="listening-practice">
+    {phase === 'setup' ? <>
+      <div className="listening-intro"><span>LUYỆN KỸ NĂNG NGHE</span><h3>Nghe, hiểu và trả lời</h3><p>Hai đoạn hội thoại, mỗi đoạn 5 câu hỏi với các dạng lấy cảm hứng từ IELTS Listening. Hai nhân vật dùng hai giọng AI khác nhau.</p></div>
+      <div className="listening-topic-grid">{topics.map(([id, label]) => <button type="button" key={id} className={topic === id ? 'active' : ''} onClick={() => setTopic(id)}>{label}</button>)}</div>
+      <button type="button" className="listening-primary" onClick={createLesson}>Tạo bài nghe <Icon name="next" size={16} /></button>
+      {error && <p className="listening-error" role="alert">{error}</p>}
+      {recent.length > 0 && <div className="listening-recent"><strong>Kết quả gần đây</strong>{recent.map((attempt) => <div key={attempt.id}><span>{attempt.title} <small>· {attempt.level} · {attempt.at?.slice(0, 10)}</small></span><b>{attempt.correct}/{attempt.total}</b></div>)}</div>}
+    </> : phase === 'loading' ? <div className="listening-loading" role="status">Đang tạo bài nghe, vui lòng chờ một chút…</div> : <>
+      <div className="listening-lesson-head"><span>BÀI NGHE · {lesson.level}</span><h3>{lesson.title}</h3><p>2 đoạn hội thoại · 10 câu hỏi · nghe từng đoạn trước khi trả lời.</p></div>
+      {phase === 'answering' && <p className="listening-hint">Nghe cả hai đoạn ít nhất một lần rồi trả lời đủ 10 câu. Với câu điền từ, viết đúng từ hoặc số nghe được.</p>}
+      {lesson.sections.map((section, sectionIndex) => <section className="listening-section" key={sectionIndex}>
+        <div className="listening-section-heading"><span>ĐOẠN {sectionIndex + 1} · CÂU {sectionIndex * 5 + 1}–{sectionIndex * 5 + 5}</span><h4>{section.title}</h4></div>
+        <div className="listening-player">
+          <div className="listening-player-mark"><Icon name="speaker" size={22} /></div>
+          <div><strong>Bài nghe</strong><small>{preparing === sectionIndex ? previewing ? 'Đang chuẩn bị mẫu nghe thử…' : 'Đang chuẩn bị audio…' : playing === sectionIndex ? previewing ? 'Đang nghe thử tốc độ…' : 'Đang phát…' : played[sectionIndex] ? 'Sẵn sàng nghe lại' : 'Chưa phát'}</small></div>
+          <button type="button" disabled={preparing !== null} onClick={() => play(sectionIndex)}><Icon name="play" size={15} /> {played[sectionIndex] ? 'Nghe lại' : 'Phát đoạn nghe'}</button>
+          <details className="listening-speed-control"><summary>Tốc độ {playbackSpeed}× <Icon name="chevron" size={13} /></summary><div className="listening-speed-menu">
+            {[0.75, 1, 1.25, 1.5].map((speed) => <button type="button" key={speed} className={playbackSpeed === speed ? 'active' : ''} onClick={(event) => { setPlaybackSpeed(speed); setSpeechPlaybackRate(speed); event.currentTarget.closest('details').open = false }}>{speed}× {speed === 1 ? 'Bình thường' : speed < 1 ? 'Chậm' : 'Nhanh'}</button>)}
+            <button type="button" className="listening-speed-preview" disabled={preparing !== null} onClick={(event) => { event.currentTarget.closest('details').open = false; play(sectionIndex, true) }}><Icon name="play" size={13} /> Nghe thử tốc độ</button>
+          </div></details>
+          {(playing === sectionIndex || preparing === sectionIndex) && <button type="button" className="listening-secondary" onClick={() => { playbackRequestRef.current++; cancelNaturalSpeech(); setPreparing(null); setPlaying(null); setPreviewing(false) }} aria-label="Dừng phát"><Icon name="stop" size={15} /></button>}
+        </div>
+        <div className="listening-questions">{section.questions.map((question, index) => renderQuestion(question, sectionIndex * 5 + index))}</div>
+        {phase === 'result' && <details className="listening-transcript"><summary>Xem bản chép lời đoạn {sectionIndex + 1}</summary>{section.turns.map((turn, index) => <p key={index}><strong>{turn.speaker}:</strong> {turn.text}</p>)}</details>}
+      </section>)}
+      {phase === 'answering' ? <button type="button" className="listening-primary" disabled={!played[0] || !played[1] || answeredCount !== lesson.questions.length} onClick={submit}>Nộp bài · {answeredCount}/{lesson.questions.length}</button> : <><div className="listening-result"><strong>{score}/{lesson.questions.length} câu đúng</strong><span>{Math.round(score / lesson.questions.length * 100)}%</span></div><button type="button" className="listening-primary" onClick={() => { setLesson(null); setPhase('setup'); setError('') }}>Làm bài nghe khác <Icon name="next" size={16} /></button></>}
+      {error && <p className="listening-error" role="alert">{error}</p>}
+    </>}
+  </div>
+}
+
+function ReviewHub({ profileId, profile, cefrLevel, speechVoice, dueCount, mistakeCount, initialMode = 'setup', onRefresh, onExit, onStartSpeaking }) {
   const [mode, setMode] = useState(initialMode)
   const [quiz, setQuiz] = useState(null)
   const [retryQs, setRetryQs] = useState([])
@@ -4012,6 +4256,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
     { id: 'mistakes', group: 'ÔN TẬP', icon: 'repeat', title: 'Ôn lỗi cũ', desc: `${dueCount} lỗi đến hạn`, badge: dueCount },
     { id: 'setup', group: 'ÔN TẬP', icon: 'check', title: 'Bài trắc nghiệm', desc: 'Luyện theo điểm yếu hoặc chủ đề' },
     { id: 'history', group: 'ÔN TẬP', icon: 'book', title: 'Bài đã làm', desc: 'Xem lại đáp án và giải thích' },
+    { id: 'listening', group: 'KỸ NĂNG', icon: 'speaker', title: 'Luyện nghe', desc: 'Nghe hội thoại và trả lời câu hỏi' },
     { id: 'cloze', group: 'TRÒ CHƠI', icon: 'edit', title: 'Điền từ vào câu', desc: 'Ôn từ vựng qua ngữ cảnh' },
     { id: 'spot', group: 'TRÒ CHƠI', icon: 'warning', title: 'Tìm câu sai', desc: 'Nhận diện và sửa lỗi' },
     { id: 'match', group: 'TRÒ CHƠI', icon: 'clock', title: 'Ghép từ 60 giây', desc: 'Ghép từ với nghĩa' },
@@ -4107,7 +4352,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
       <section className="review-workspace-center" aria-label={selectedModeInfo?.title || 'Hoạt động ôn tập'}>
         <header className="review-workspace-topbar">
           <div><span>KHÔNG GIAN ÔN TẬP</span><h2>{selectedModeInfo?.title || 'Ôn tập'}</h2></div>
-          <div className="review-workspace-topbar-actions"><span className="review-workspace-level">{cefrLevel || 'A1'}</span><button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button></div>
+          <div className="review-workspace-topbar-actions"><span className="review-workspace-level">{cefrLevel || 'A1'}</span><button className="workspace-main-back" type="button" onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button></div>
         </header>
         <div className="review-workspace-activity">{activity}</div>
       </section>
@@ -4214,6 +4459,7 @@ function ReviewHub({ profileId, profile, cefrLevel, dueCount, mistakeCount, init
   if (mode === 'spot') return workspace(<SpotGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={() => handleActivityExit('setup')} />)
   if (mode === 'match') return workspace(<MatchGame profileId={profileId} profile={profile} cefrLevel={cefrLevel} onExit={() => handleActivityExit('setup')} />)
   if (mode === 'writing') return workspace(<WritingPracticeScreen profileId={profileId} profile={profile} cefrLevel={cefrLevel} onEvaluated={refreshProgress} />)
+  if (mode === 'listening') return workspace(<ListeningPracticeScreen profileId={profileId} profile={profile} cefrLevel={cefrLevel} speechVoice={speechVoice} />)
 
   return workspace(<QuizSetup profile={profile} mistakeCount={mistakeCount} onStart={(cfg) => { setQuiz(cfg); setMode('quiz') }} />)
 }
@@ -4485,6 +4731,36 @@ function SkillMap({ skills, focuses = [] }) {
   )
 }
 
+function AssessmentProgressChart({ attempts }) {
+  const points = attempts.filter((attempt) => attempt.total > 0).map((attempt, index, list) => ({
+    ...attempt,
+    percent: Math.round(attempt.correct / attempt.total * 100),
+    x: list.length === 1 ? 400 : 70 + index * 660 / (list.length - 1)
+  }))
+  const y = (percent) => 205 - percent * 1.55
+  return <div className="assessment-trend">
+    <div className="assessment-trend-heading"><strong>Tiến bộ qua các bài đánh giá</strong><span>{points.length} lần gần nhất</span></div>
+    <div className="assessment-trend-legend"><span><i className="assessment-trend-legend-score" />Điểm bài làm</span><span><i className="assessment-trend-legend-target" />Mốc 90% để đạt</span></div>
+    <div className="assessment-trend-plot">
+      <svg viewBox="0 0 800 280" role="img" aria-label={`Biểu đồ điểm đánh giá tổng quát: ${points.map((point, index) => `lần ${index + 1}, ${point.at?.slice(0, 10) || 'không rõ ngày'}, ${point.level || 'không rõ mức'}, ${point.percent}%`).join('; ')}`}>
+        {[0, 25, 50, 75, 90, 100].map((tick) => <g key={tick}>
+          <line className={tick === 90 ? 'assessment-trend-goal' : 'assessment-trend-grid'} x1="70" x2="730" y1={y(tick)} y2={y(tick)} />
+          <text className="assessment-trend-axis" x="47" y={y(tick) + 4} textAnchor="end">{tick}%</text>
+        </g>)}
+        {points.slice(1).map((point, index) => <line key={point.id} className={point.level && points[index].level && points[index].level !== point.level ? 'assessment-trend-line assessment-trend-transition' : 'assessment-trend-line'} x1={points[index].x} y1={y(points[index].percent)} x2={point.x} y2={y(point.percent)} />)}
+        {points.map((point, index) => <g key={point.id}>
+          <circle className="assessment-trend-dot" cx={point.x} cy={y(point.percent)} r="7"><title>Lần {index + 1} · {point.at?.slice(0, 10)} · {point.level || 'Chưa ghi mức'} · {point.correct}/{point.total} ({point.percent}%)</title></circle>
+          <text className="assessment-trend-value" x={point.x} y={y(point.percent) - 14} textAnchor="middle">{point.percent}%</text>
+          <text className="assessment-trend-attempt" x={point.x} y="231" textAnchor="middle">Lần {index + 1}</text>
+          <text className="assessment-trend-date" x={point.x} y="249" textAnchor="middle">{point.at?.slice(5, 10).split('-').reverse().join('/') || '—'}</text>
+          <text className="assessment-trend-level" x={point.x} y="267" textAnchor="middle">{point.level || ''}</text>
+        </g>)}
+      </svg>
+    </div>
+    <p>Mỗi điểm là một bài đánh giá. Nét đứt báo hiệu chuyển mức đề; hãy so sánh điểm trong cùng mức.</p>
+  </div>
+}
+
 function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenStructures }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -4524,7 +4800,7 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
       <>
         <header className="progress-header">
           <div><span className="progress-eyebrow">HỌC TẬP CÙNG AI / TIẾN BỘ</span><h1>Tiến bộ của bạn</h1><p>Nhìn lại kết quả và chọn bước học tiếp theo.</p></div>
-          <button type="button" className="progress-back" onClick={onExit}><Icon name="back" size={16} /> Quay lại</button>
+          <button type="button" className="progress-back" onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
         </header>
         <div className="progress-empty">
           <span>CHƯA CÓ DỮ LIỆU</span>
@@ -4546,7 +4822,7 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
     <>
       <header className="progress-header">
         <div><span className="progress-eyebrow">HỌC TẬP CÙNG AI / TIẾN BỘ</span><h1>Tiến bộ của bạn</h1><p>Kết quả từ bài đánh giá, ôn tập và hội thoại · tuần bắt đầu từ thứ Hai</p></div>
-        <button type="button" className="progress-back" onClick={onExit}><Icon name="back" size={16} /> Quay lại</button>
+        <button type="button" className="progress-back" onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
       </header>
 
       {/* Lưới bốn thẻ số */}
@@ -4611,6 +4887,8 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
               </div>
             </div>
 
+            <AssessmentProgressChart attempts={data.assessmentTrend || []} />
+
             {signals.length > 0 && <div style={{ display: 'flex', flexDirection: 'column', marginTop: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
                 <div style={progressStyles.cardTitle}>Gợi ý luyện tập</div>
@@ -4645,20 +4923,6 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
                     </div>
                   </details>
                 })}
-              </div>
-            </div>}
-
-            {latest.incorrectQuestions?.length > 0 && <div style={{ marginTop: '18px' }}>
-              <div style={{ ...progressStyles.cardTitle, marginBottom: '8px' }}>Câu cần luyện lại ({latest.incorrectQuestions.length})</div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '9px' }}>
-                {latest.incorrectQuestions.map((item) => <article key={item.number} style={{ minWidth: 0, padding: '12px 14px', border: '1px solid var(--border-soft)', borderRadius: '11px', background: 'var(--surface)' }}>
-                  <div style={{ color: 'var(--text-muted)', fontSize: fs(11), marginBottom: '5px' }}>Câu {item.number}{item.focus ? ` · ${item.focus}` : ''}</div>
-                  <strong style={{ display: 'block', color: 'var(--text-strong)', fontSize: fs(12), lineHeight: 1.5 }}>{item.question}</strong>
-                  {item.passage && <details style={{ color: 'var(--text-muted)', fontSize: fs(11), marginTop: '6px' }}><summary style={{ cursor: 'pointer' }}>Xem đoạn đọc</summary><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: '6px 0 0' }}>{item.passage}</p></details>}
-                  {item.picked >= 0 && item.options[item.picked] && <div style={{ color: 'var(--danger)', fontSize: fs(11), marginTop: '7px' }}>Bạn chọn: {item.options[item.picked]}</div>}
-                  <div style={{ color: 'var(--accent-text)', fontSize: fs(11), marginTop: '4px' }}>Đáp án: {item.options[item.answer] || 'Chưa có'}</div>
-                  {item.explanation && <div style={{ color: 'var(--text-muted)', fontSize: fs(11), lineHeight: 1.5, marginTop: '5px' }}>{item.explanation}</div>}
-                </article>)}
               </div>
             </div>}
 
@@ -5171,7 +5435,7 @@ function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
     return (
       <div style={styles.container}>
         <h2 style={styles.question}>Không có thẻ để học</h2>
-        <button className="qprimary" style={quizStyles.primary} onClick={onBack}>Quay lại</button>
+        <button className="qprimary icon-only-back" style={quizStyles.primary} onClick={onBack} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
       </div>
     )
   }
@@ -5217,7 +5481,7 @@ function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
       </div>
 
       <div style={{ display: 'flex', gap: '8px' }}>
-        <button className="qghost" style={quizStyles.ghost} onClick={onBack}><Icon name="back" size={16} /> Quay lại</button>
+        <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onBack} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
         <button className="qghost" style={quizStyles.ghost} onClick={mix}><Icon name="repeat" size={16} /> Xáo trộn</button>
       </div>
     </div>
@@ -5605,7 +5869,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
           >
             <Icon name="cards" size={15} /> Học thẻ
           </button>
-          <button className="workspace-main-back" type="button" onClick={onExit}><Icon name="back" size={14} /> Quay lại</button>
+          <button className="workspace-main-back" type="button" onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
         </div>
 
         {showAdd && (
@@ -5775,7 +6039,6 @@ function VoiceTurnReview({ reviews, speechLang, speechVoice, onComplete }) {
   const [notice, setNotice] = useState('')
   const cardRef = useRef(null)
   const current = reviews[index]
-  const correctedCount = reviews.filter((item) => item.needsRepeat).length
   const reviewInput = useSpeechInput((transcript) => {
     const recognized = String(transcript || '').trim()
     setHeard(recognized)
@@ -5812,8 +6075,8 @@ function VoiceTurnReview({ reviews, speechLang, speechVoice, onComplete }) {
   return <section ref={cardRef} className="voice-turn-review" aria-label="Ôn lại từng câu sau phiên nói">
     <div className="voice-turn-review-top"><span>ÔN LẠI SAU PHIÊN</span><strong>Câu {index + 1}/{reviews.length}</strong></div>
     <div className="voice-turn-review-meter"><span style={{ width: `${(index + 1) / reviews.length * 100}%` }} /></div>
-    <h2>{current.reviewUnavailable ? 'Chưa kiểm tra được câu này' : current.needsRepeat ? 'Nói lại câu đã sửa' : 'Câu này đã đúng'}</h2>
-    <p className="voice-turn-review-intro">Đã ghi nhận {reviews.length} câu bạn trả lời. {correctedCount} câu cần luyện lại.</p>
+    <h2>{current.reviewUnavailable ? 'Chưa kiểm tra được câu này' : current.needsRepeat ? 'Nói lại câu đã sửa' : 'Không cần sửa câu này'}</h2>
+    <p className="voice-turn-review-intro">Có {reviews.length} câu cần luyện lại.</p>
     <div className="voice-turn-review-line"><span>BẠN ĐÃ NÓI</span><p>{current.original}</p></div>
     {current.needsRepeat ? <>
       <div className="voice-turn-review-line voice-turn-review-target"><span>CÂU CẦN NÓI LẠI</span><p>{current.corrected}</p></div>
@@ -5920,7 +6183,7 @@ function MistakeNotebook({ mistakes, onBack, onPractice }) {
     <main className="mistake-notebook fade-in">
       <header className="mistake-notebook-header">
         <div><span className="mistake-notebook-eyebrow">HỌC TẬP CÙNG AI / SỔ TAY</span><h1>Sổ tay lỗi sai</h1><p>Xem lại câu đã viết, cách sửa và lịch ôn tiếp theo.</p></div>
-        <button type="button" className="mistake-notebook-back" onClick={onBack}><Icon name="back" size={16} /> Quay lại</button>
+        <button type="button" className="mistake-notebook-back" onClick={onBack} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
       </header>
 
       <div className="mistake-notebook-layout">
@@ -5968,7 +6231,7 @@ function MistakeNotebook({ mistakes, onBack, onPractice }) {
   )
 }
 
-function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfileChange }) {
+function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfileChange, onLevelControlChange }) {
   const [step, setStep] = useState(0)
   const [profile, setProfile]= useState({
     nativeLanguage:'',
@@ -5981,6 +6244,8 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [isLoading, setIsLoading] = useState(false)
   const [placementResult, setPlacementResult] = useState(null)
   const [chatHistory, setChatHistory] = useState([])
+  const [activeChatStructureSuggestion, setActiveChatStructureSuggestion] = useState(null)
+  const [visibleChatCount, setVisibleChatCount] = useState(80)
   const [voiceChatHistory, setVoiceChatHistory] = useState([])
   const [voiceLiveTranscript, setVoiceLiveTranscript] = useState('')
   const [voiceSpeechDetected, setVoiceSpeechDetected] = useState(false)
@@ -6012,6 +6277,10 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [chatInput, setChatInput] = useState('')
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [voiceMode, setVoiceMode] = useState(false)
+  const [voicePaused, setVoicePaused] = useState(false)
+  const voicePausedRef = useRef(false)
+  const [voiceWordLookup, setVoiceWordLookup] = useState(null)
+  const voiceWordLookupRequestRef = useRef(0)
   const [isVoiceSpeaking, setIsVoiceSpeaking] = useState(false)
   const [voiceError, setVoiceError] = useState('')
   const [voiceChatMode, setVoiceChatMode] = useState('free')
@@ -6048,13 +6317,26 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [editForm, setEditForm] = useState({ nativeLanguage: '', targetLanguage: '', goal: '' })
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [conversations, setConversations] = useState([])
+  const [conversationSections, setConversationSections] = useState([])
+  const [conversationMenu, setConversationMenu] = useState(null)
+  const [renameConversation, setRenameConversation] = useState(null)
+  const [newSectionFor, setNewSectionFor] = useState(null)
+  const [managementName, setManagementName] = useState('')
   const [currentConversationId, setCurrentConversationId] = useState(null)
   const [currentTopic, setCurrentTopic] = useState(null)
+  const [pendingConversationTitle, setPendingConversationTitle] = useState('')
   const [showTopicPicker, setShowTopicPicker] = useState(false)
+  const [chatSearchOpen, setChatSearchOpen] = useState(false)
+  const [chatSearchQuery, setChatSearchQuery] = useState('')
+  const [chatSearchIndex, setChatSearchIndex] = useState(0)
+  const [structureChatChoice, setStructureChatChoice] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
   const speechLang = toSpeechLang(profile.targetLanguage)
   const scenarioSearchKey = voiceScenarioSearch.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd')
-  const visibleVoiceScenarios = voiceRoleplayScenarios.filter((scenario) => `${scenario.title} ${scenario.description}`.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').includes(scenarioSearchKey))
+  const visibleVoiceScenarios = voiceRoleplayScenarios.filter((scenario) => {
+    const group = voiceScenarioGroups.find((item) => item.ids.includes(scenario.id))
+    return `${scenario.title} ${scenario.description} ${group?.title || ''}`.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').includes(scenarioSearchKey)
+  })
   const [levelMode, setLevelMode] = useState('test')
   const [manualLevel, setManualLevel] = useState('')
   const [placementError, setPlacementError] = useState('')
@@ -6072,6 +6354,10 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
     voiceSessionIdRef.current += 1
     voiceEndingRef.current = true
     voiceModeRef.current = false
+    voicePausedRef.current = false
+    setVoicePaused(false)
+    setVoiceWordLookup(null)
+    voiceWordLookupRequestRef.current += 1
     voiceChallengeBlockingRef.current = false
     setVoiceChallenge(null)
     setVoiceChallengeLoading(false)
@@ -6102,7 +6388,7 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
     window.clearTimeout(voiceRestartTimerRef.current)
     voiceRestartTimerRef.current = window.setTimeout(() => {
       voiceRestartTimerRef.current = null
-      if (voiceModeRef.current && !voiceEndingRef.current && !voiceChallengeBlockingRef.current) {
+      if (voiceModeRef.current && !voicePausedRef.current && !voiceEndingRef.current && !voiceChallengeBlockingRef.current) {
         setVoiceError('')
         speechControlRef.current?.start()
       }
@@ -6139,6 +6425,29 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
     if (!el) return
     el.scrollTo({ top: el.scrollHeight, behavior: grew > 0 && grew <= 2 ? 'smooth' : 'auto' })
   }, [chatHistory.length, voiceChatHistory.length, isChatLoading, showVoiceChat])
+
+  const chatSearchMatches = chatSearchQuery.trim()
+    ? chatHistory.map((message, index) => message.text?.toLocaleLowerCase().includes(chatSearchQuery.trim().toLocaleLowerCase()) ? index : -1).filter((index) => index >= 0)
+    : []
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && step >= 5 && !showStructures && !showVoiceChat) {
+        event.preventDefault()
+        setChatSearchOpen(true)
+        setVisibleChatCount(chatHistory.length)
+      } else if (event.key === 'Escape' && chatSearchOpen) {
+        setChatSearchOpen(false)
+        setChatSearchQuery('')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [step, showStructures, showVoiceChat, chatSearchOpen, chatHistory.length])
+  useEffect(() => {
+    if (!chatSearchOpen || !chatSearchMatches.length) return
+    const selected = chatSearchMatches[Math.min(chatSearchIndex, chatSearchMatches.length - 1)]
+    chatBoxRef.current?.querySelector(`[data-chat-index="${selected}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [chatSearchOpen, chatSearchQuery, chatSearchIndex, visibleChatCount, currentConversationId, chatHistory.length])
 
   useEffect(() => {
   window.api.getProfiles().then((res) => {
@@ -6244,10 +6553,8 @@ const handleStartNewAccount = async () => {
     setIsLoading(false)
   }
 
-  const handleChangeLevel = async (delta) => {
-    const current = placementResult?.level || 'A1'
-    const next = LEVELS[LEVELS.indexOf(current) + delta]
-    if (!next) return
+  const handleSetLevel = async (next) => {
+    if (!profileId || !LEVELS.includes(next)) return
     const res = await window.api.setLevel({ profileId, cefrLevel: next, source: 'manual' })
     if (res.success) {
       setPlacementResult({ ...placementResult, level: next })
@@ -6255,6 +6562,9 @@ const handleStartNewAccount = async () => {
       setTimeout(() => setLevelNotice(''), 3000)
     }
   }
+  useEffect(() => {
+    onLevelControlChange({ level: profileId ? placementResult?.level || 'A1' : null, setLevel: handleSetLevel })
+  }, [profileId, placementResult?.level])
   const handleOpenReview = async () => {
   stopVoicePractice()
   const result = await window.api.getMistakes({ profileId })
@@ -6355,6 +6665,12 @@ useEffect(() => {
 }, [profileId])
 
 useEffect(() => {
+  if (showReview || showPractice || showVocab || showStructures || showProgress || showAssessment || showVoiceChat || showEditProfile || showTopicPicker || showNotes) {
+    setActiveChatStructureSuggestion(null)
+  }
+}, [showReview, showPractice, showVocab, showStructures, showProgress, showAssessment, showVoiceChat, showEditProfile, showTopicPicker, showNotes])
+
+useEffect(() => {
   onLoggedInChange && onLoggedInChange(step >= 5)
 }, [step])
 
@@ -6364,13 +6680,84 @@ const loadConversations = async (pid) => {
   return res.conversations || []
 }
 
+const loadConversationSections = async (pid) => {
+  const res = await window.api.getConversationSections({ profileId: pid })
+  setConversationSections(res.sections || [])
+}
+
+useEffect(() => {
+  if (profileId) loadConversationSections(profileId)
+  else setConversationSections([])
+}, [profileId])
+
+const updateConversation = async (conversationId, changes) => {
+  const result = await window.api.updateConversation({ profileId, conversationId, ...changes })
+  if (result.success) await loadConversations(profileId)
+  setConversationMenu(null)
+}
+
+const createConversationSection = async () => {
+  const name = managementName.trim()
+  if (!name) return
+  const result = await window.api.createConversationSection({ profileId, name, conversationId: newSectionFor?.id })
+  if (result.success) {
+    await Promise.all([loadConversationSections(profileId), loadConversations(profileId)])
+    setNewSectionFor(null)
+    setManagementName('')
+  }
+}
+
+const saveConversationName = async () => {
+  if (!managementName.trim() || !renameConversation) return
+  await updateConversation(renameConversation.id, { title: managementName.trim() })
+  setRenameConversation(null)
+  setManagementName('')
+}
+
+const renderConversation = (conversation) => <div
+  key={conversation.id}
+  className={`conv-item ${conversation.id === currentConversationId ? 'conv-item-active' : ''}`}
+  style={{ ...styles.convItem, ...(conversation.id === currentConversationId ? styles.convItemActive : {}) }}
+  onClick={() => { setConversationMenu(null); stopVoicePractice(); switchConversation(conversation.id) }}
+  onContextMenu={(event) => {
+    event.preventDefault()
+    setConversationMenu({ conversation, x: Math.min(event.clientX, window.innerWidth - 220), y: Math.min(event.clientY, window.innerHeight - 340) })
+  }}
+>
+  <span style={styles.convTitle}>{conversation.title || 'Đoạn chat mới'}</span>
+  {Boolean(conversation.pinned) && <span className="conversation-pin-mark" aria-label="Đã ghim">●</span>}
+</div>
+
 const switchConversation = async (convId) => {
+  setActiveChatStructureSuggestion(null)
+  setChatSearchOpen(false)
+  setChatSearchQuery('')
+  setVisibleChatCount(80)
   setCurrentConversationId(convId)
+  setPendingConversationTitle('')
   const conv = conversations.find((c) => c.id === convId)
   setCurrentTopic(conv?.topic || null)
   const res = await window.api.getConversationMessages({ conversationId: convId })
-  const loaded = (res.messages || []).map(m => ({ role: m.role, text: m.text }))
+  const loaded = (res.messages || [])
+    .filter((m) => !(m.role === 'user' && m.text === 'Start this grammar help chat by asking whether the learner has any questions about this sentence pattern.'))
+    .map((m) => ({ role: m.role, text: m.text }))
   setChatHistory(loaded)
+}
+
+const startStructureTextChat = async (structure, conversation = null) => {
+  stopVoicePractice()
+  const existingHistory = conversation ? (await window.api.getConversationMessages({ conversationId: conversation.id })).messages
+    ?.filter((m) => !(m.role === 'user' && m.text === 'Start this grammar help chat by asking whether the learner has any questions about this sentence pattern.'))
+    .map((m) => ({ role: m.role, text: m.text })) || [] : []
+  setCurrentConversationId(conversation?.id || null)
+  setPendingConversationTitle(conversation ? '' : `Hỏi về ${structure.title}`)
+  setCurrentTopic(conversation?.topic || `Cấu trúc câu: ${structure.title}`)
+  setChatHistory(existingHistory)
+  setVisibleChatCount(80)
+  setStructureChatChoice(null)
+  setShowStructures(false)
+  setInitialStructureId(null)
+  void handleSendMessage('', { structureKickoff: structure, targetConversationId: conversation?.id || null, targetHistory: existingHistory, targetTopic: `Cấu trúc câu: ${structure.title}` })
 }
 
 const handleNewConversation = () => {
@@ -6379,8 +6766,11 @@ const handleNewConversation = () => {
 }
 
 const selectTopicAndStart = (topicId) => {
+  setActiveChatStructureSuggestion(null)
+  setVisibleChatCount(80)
   setCurrentTopic(topicId === 'free' ? null : topicId)
   setCurrentConversationId(null)
+  setPendingConversationTitle('')
   setChatHistory([])
   setShowTopicPicker(false)
 }
@@ -6397,6 +6787,7 @@ const confirmDeleteConversation = async () => {
   await window.api.deleteConversation({ conversationId: convId })
   if (convId === currentConversationId) {
     setCurrentConversationId(null)
+    setPendingConversationTitle('')
     setChatHistory([])
   }
   loadConversations(profileId)
@@ -6404,19 +6795,20 @@ const confirmDeleteConversation = async () => {
 
 
 const handleSendMessage = async (messageOverride, options = {}) => {
-  const { voiceKickoff = false, skipVoiceChallenge = false, voiceChallengeCorrection = '', voiceScenarioPrompt = activeVoiceScenarioPrompt, voiceGrammarFocus = activeVoiceGrammarFocus } = options
+  const { voiceKickoff = false, structureKickoff = null, targetConversationId = undefined, targetHistory = null, targetTopic = null, skipVoiceChallenge = false, voiceChallengeCorrection = '', voiceScenarioPrompt = activeVoiceScenarioPrompt, voiceGrammarFocus = activeVoiceGrammarFocus } = options
   const message = typeof messageOverride === 'string' ? messageOverride : chatInput
   const trimmedMessage = message.trim()
-  if ((!trimmedMessage && !voiceKickoff) || isChatLoading) return
+  if ((!trimmedMessage && !voiceKickoff && !structureKickoff) || isChatLoading) return
 
-  const isVoiceChat = voiceModeRef.current || showVoiceChat
+  const isVoiceChat = !structureKickoff && (voiceModeRef.current || showVoiceChat)
+  if (!isVoiceChat) setActiveChatStructureSuggestion(null)
   if (isVoiceChat) {
     setVoiceSpeakingHint(null)
     setVoiceSpeakingHintError('')
     setVoiceChallengeError('')
   }
   const userMessage = trimmedMessage ? { role: 'user', text: trimmedMessage } : null
-  const activeHistory = isVoiceChat ? voiceChatHistory : chatHistory
+  const activeHistory = isVoiceChat ? voiceChatHistory : targetHistory || chatHistory
   const newHistory = voiceKickoff ? [] : userMessage ? [...activeHistory, userMessage] : activeHistory
   if (isVoiceChat) setVoiceChatHistory(newHistory)
   else {
@@ -6429,8 +6821,8 @@ const handleSendMessage = async (messageOverride, options = {}) => {
   try {
     const result = await window.api.sendChatMessage({
       profileId: profileId,
-      conversationId: isVoiceChat ? null : currentConversationId,
-      topic: isVoiceChat ? null : currentTopic,
+      conversationId: isVoiceChat ? null : targetConversationId !== undefined ? targetConversationId : currentConversationId,
+      topic: isVoiceChat ? null : targetTopic || (structureKickoff ? `Cấu trúc câu: ${structureKickoff.title}` : currentTopic),
       cefrLevel: placementResult?.level || 'A1',
       targetLanguage: profile.targetLanguage,
       nativeLanguage: profile.nativeLanguage,
@@ -6438,15 +6830,19 @@ const handleSendMessage = async (messageOverride, options = {}) => {
       voiceChat: isVoiceChat,
       voiceScenarioPrompt: isVoiceChat ? voiceScenarioPrompt : '',
       voiceGrammarFocus: isVoiceChat ? voiceGrammarFocus : null,
-      history: voiceKickoff ? [] : activeHistory.slice(-6),
-      message: userMessage?.text || (voiceGrammarFocus
+      structureKickoff,
+      history: voiceKickoff ? [] : isVoiceChat ? selectVoiceContextHistory(activeHistory, voiceGrammarFocus) : activeHistory.slice(-6),
+      message: userMessage?.text || (structureKickoff ? 'Start this grammar help chat by asking whether the learner has any questions about this sentence pattern.' : voiceGrammarFocus
         ? 'Start a realistic role-play that needs the target sentence pattern. Set the scene and my role, briefly show when to use the pattern, model one line, then ask me to respond in character.'
         : 'Start the selected role-play now with one short in-character opening line and a natural question for the learner.')
     })
     const replyText = isVoiceChat && voiceChallengeCorrection ? `${voiceChallengeCorrectionQuestion(voiceChallengeCorrection)} ${result.reply}` : result.reply
     const completedHistory = [...newHistory, { role: 'model', text: replyText, mistakes: result.mistakes || [] }]
     if (isVoiceChat) setVoiceChatHistory(completedHistory)
-    else setChatHistory(completedHistory)
+    else {
+      setChatHistory(completedHistory)
+      setActiveChatStructureSuggestion(result.structureSuggestion || null)
+    }
     if (!isVoiceChat && result.conversationId && result.conversationId !== currentConversationId) {
       setCurrentConversationId(result.conversationId)
     }
@@ -6455,7 +6851,7 @@ const handleSendMessage = async (messageOverride, options = {}) => {
       refreshMistakes()
       refreshDailyStats()
     }
-    if (voiceModeRef.current) {
+    if (voiceModeRef.current && !voicePausedRef.current) {
       setVoiceLiveTranscript('')
       const learnerTurns = completedHistory.filter((turn) => turn.role === 'user').length
       const offerChallenge = !voiceGrammarFocus && !voiceKickoff && !skipVoiceChallenge && learnerTurns >= 2 && (learnerTurns - 2) % 3 === 0
@@ -6475,7 +6871,7 @@ const handleSendMessage = async (messageOverride, options = {}) => {
     return completedHistory
   } catch (error) {
     console.error('Error:', error)
-    if (voiceModeRef.current) {
+    if (voiceModeRef.current && !voicePausedRef.current) {
       setVoiceError('Chưa nhận được câu trả lời. Hãy thử nói lại.')
       scheduleVoiceRestart(500)
     }
@@ -6485,7 +6881,7 @@ const handleSendMessage = async (messageOverride, options = {}) => {
 }
 
 const handleVoiceTranscript = (transcript) => {
-  const phrase = transcript.trim()
+  const phrase = cleanRepeatedTranscript(transcript)
   if (!voiceModeRef.current || voiceChallengeBlockingRef.current) return
   setVoiceLiveTranscript(phrase)
   if (!phrase) {
@@ -6499,9 +6895,65 @@ const handleVoiceTranscript = (transcript) => {
 
 const voiceInput = useSpeechInput(handleVoiceTranscript, setVoiceSpeechDetected)
 
+const pauseVoiceChat = () => {
+  if (!voiceModeRef.current || voicePausedRef.current) return
+  voicePausedRef.current = true
+  setVoicePaused(true)
+  window.clearTimeout(voiceRestartTimerRef.current)
+  voiceRestartTimerRef.current = null
+  setVoiceAutoSendCountdown(null)
+  speechControlRef.current?.stop()
+  cancelNaturalSpeech()
+  setIsVoiceSpeaking(false)
+}
+
+const resumeVoiceChat = () => {
+  if (!voiceModeRef.current || !voicePausedRef.current) return
+  voicePausedRef.current = false
+  setVoicePaused(false)
+  setVoiceWordLookup(null)
+  voiceWordLookupRequestRef.current += 1
+  if (!isChatLoading && !voicePendingTranscriptRef.current && !voiceChallengeBlockingRef.current && !voiceChallenge && !voiceChallengeLoading && !voiceInput.transcribing) scheduleVoiceRestart(150)
+}
+
+const lookupVoiceWord = async (word, sentence, messageIndex) => {
+  pauseVoiceChat()
+  const requestId = ++voiceWordLookupRequestRef.current
+  setVoiceWordLookup({ word, messageIndex, loading: true })
+  try {
+    const result = await window.api.lookupVoiceWord({ word, sentence, targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage })
+    if (requestId !== voiceWordLookupRequestRef.current) return
+    setVoiceWordLookup(result?.success
+      ? { word, messageIndex, headword: result.headword || word, meaning: result.meaning, contextSentence: result.contextSentence, contextTranslation: result.contextTranslation, usage: result.usage, otherMeaning: result.otherMeaning, examples: result.examples || [] }
+      : { word, messageIndex, error: result?.error || 'Chưa tra được từ này.' })
+  } catch {
+    if (requestId === voiceWordLookupRequestRef.current) setVoiceWordLookup({ word, messageIndex, error: 'Chưa tra được từ này.' })
+  }
+}
+
+const saveVoiceWordToFlashcard = async () => {
+  const entry = voiceWordLookup
+  if (!entry?.meaning || entry.saving || entry.saved || !profileId) return
+  setVoiceWordLookup((current) => current === entry ? { ...current, saving: true, saveError: '' } : current)
+  try {
+    const result = await window.api.saveVocabEntries({
+      profileId,
+      entries: [{ word: entry.headword || entry.word, meaning: entry.meaning, example: entry.contextSentence || entry.examples?.[0]?.sentence || '' }]
+    })
+    if (!result?.success) throw new Error('Không lưu được từ vào flashcard.')
+    setVoiceWordLookup((current) => current?.word === entry.word && current?.messageIndex === entry.messageIndex
+      ? { ...current, saving: false, saved: true, alreadySaved: result.added === 0 }
+      : current)
+  } catch {
+    setVoiceWordLookup((current) => current?.word === entry.word && current?.messageIndex === entry.messageIndex
+      ? { ...current, saving: false, saveError: 'Chưa lưu được. Hãy thử lại.' }
+      : current)
+  }
+}
+
 const sendVoiceTranscript = () => {
   const phrase = voicePendingTranscript.trim()
-  if (!phrase || isChatLoading) return
+  if (!phrase || isChatLoading || voicePausedRef.current) return
   voicePendingTranscriptRef.current = ''
   setVoicePendingTranscript('')
   setVoiceLiveTranscript('')
@@ -6511,7 +6963,7 @@ const sendVoiceTranscript = () => {
 }
 
 const requestVoiceMicroChallenge = async (turns = voiceChatHistory) => {
-  if (!voiceModeRef.current || voiceEndingRef.current || voiceChallengeBlockingRef.current || voiceChallengeLoading || voiceChallenge) return
+  if (!voiceModeRef.current || voicePausedRef.current || voiceEndingRef.current || voiceChallengeBlockingRef.current || voiceChallengeLoading || voiceChallenge) return
   const sessionId = voiceSessionIdRef.current
   voiceChallengeBlockingRef.current = true
   window.clearTimeout(voiceRestartTimerRef.current)
@@ -6546,7 +6998,7 @@ const requestVoiceMicroChallenge = async (turns = voiceChatHistory) => {
     voiceChallengeAttemptedRef.current = false
     setVoiceChallenge(challenge)
     setVoiceLastLearned(challenge)
-    speakNaturalText(`A useful word here is ${challenge.word}. ${voiceChallengeQuestion(challenge)}`, speechLang, undefined, settings.speechVoice)
+    if (!voicePausedRef.current) speakNaturalText(`A useful word here is ${challenge.word}. ${voiceChallengeQuestion(challenge)}`, speechLang, undefined, settings.speechVoice)
   } catch (error) {
     if (sessionId === voiceSessionIdRef.current && !voiceEndingRef.current) {
       setVoiceChallengeError(error?.message || 'Chưa tạo được thử thách. Cuộc trò chuyện vẫn tiếp tục.')
@@ -6619,8 +7071,9 @@ const generateVoiceSessionFeedback = async (turns) => {
     })
     if (sessionId !== voiceSessionIdRef.current) return
     if (!result?.success) throw new Error(result?.error || 'Chưa tạo được nhận xét cho phiên này.')
-    setVoiceTurnReviews(reviewed.reviews)
-    setVoiceReviewDone(false)
+    const corrections = reviewed.reviews.filter((item) => item.needsRepeat)
+    setVoiceTurnReviews(corrections)
+    setVoiceReviewDone(corrections.length === 0)
     setVoiceSessionFeedback(result.feedback)
   } catch (error) {
     if (sessionId === voiceSessionIdRef.current) setVoiceSessionFeedbackError(error?.message || 'Chưa tạo được nhận xét cho phiên này. Hãy thử lại.')
@@ -6655,7 +7108,7 @@ const requestVoiceSpeakingHint = async () => {
     voiceModeRef.current = resumeSession
     voiceHelpRequestRef.current = false
     setVoiceSpeakingHintLoading(false)
-    if (resumeSession) scheduleVoiceRestart(350)
+    if (resumeSession && !voicePausedRef.current) scheduleVoiceRestart(350)
   }
 }
 
@@ -6688,6 +7141,8 @@ const endVoiceChatSession = async () => {
   setVoiceSpeechDetected(false)
   voiceModeRef.current = false
   setVoiceMode(false)
+  voicePausedRef.current = false
+  setVoicePaused(false)
   setIsVoiceSpeaking(false)
   cancelNaturalSpeech()
 
@@ -6733,6 +7188,7 @@ const startNewVoiceSession = () => {
 }
 
 const retryVoiceTranscript = () => {
+  if (voicePausedRef.current) return
   voicePendingTranscriptRef.current = ''
   setVoicePendingTranscript('')
   setVoiceLiveTranscript('')
@@ -6748,7 +7204,7 @@ const toggleVoiceAutoSend = (enabled) => {
 }
 
 useEffect(() => {
-  if (!autoSendVoice || !voicePendingTranscript || voiceEndingRef.current) {
+  if (!autoSendVoice || !voicePendingTranscript || voiceEndingRef.current || voicePaused) {
     setVoiceAutoSendCountdown(null)
     return undefined
   }
@@ -6765,14 +7221,14 @@ useEffect(() => {
     }
   }, 1000)
   return () => window.clearInterval(timer)
-}, [autoSendVoice, voicePendingTranscript])
+}, [autoSendVoice, voicePendingTranscript, voicePaused])
 
 useEffect(() => {
   speechControlRef.current = voiceInput
 }, [voiceInput])
 
 useEffect(() => {
-  if (voiceModeRef.current && voiceInput.error === 'no-speech') {
+  if (voiceModeRef.current && !voicePausedRef.current && voiceInput.error === 'no-speech') {
     setVoiceError(speechErrorMessage(voiceInput.error))
     scheduleVoiceRestart(700)
   }
@@ -6801,6 +7257,10 @@ const startVoiceChatSession = (sessionOptions = null) => {
   const structure = sessionOptions?.structure || (voiceChatMode === 'structure' ? voiceStructureFocus : null)
   voiceSessionIdRef.current += 1
   voiceEndingRef.current = false
+  voicePausedRef.current = false
+  setVoicePaused(false)
+  setVoiceWordLookup(null)
+  voiceWordLookupRequestRef.current += 1
   voiceChallengeBlockingRef.current = false
   voiceChallengeCountRef.current = 0
   setVoiceLastLearned(null)
@@ -6839,7 +7299,11 @@ const startVoiceChatSession = (sessionOptions = null) => {
     setVoiceMode(true)
     const opening = structure.id === 'cond_1'
       ? "Hi! Today I'm going to help you practice the first conditional. We use it for a real future possibility: if plus the present simple, then will plus a verb. For example, 'If it rains, we will stay at home.' What will you do if it rains tomorrow?"
-      : `Hi! Today I'm going to help you practice this sentence pattern. Here's an example: '${structure.examples?.[0]?.[0] || ''}' Can you make a similar sentence?`
+      : structure.id === 'agreement'
+        ? "Hi! I'll guide you through subject-verb agreement. Imagine we're packing for a trip. I need a bag, but she needs a map. What does your friend need for the trip? Start with 'He needs' or 'She needs'."
+        : structure.id === 'there_is'
+          ? "Hi! Let's practice 'There is' and 'There are' while describing a room. There is a book on the table. What else is in your room? Start your answer with 'There is' or 'There are'."
+          : `Hi! I'll help you practice a useful sentence pattern in a real conversation. For example: '${structure.examples?.[0]?.[0] || ''}' Imagine you're telling a friend about your day. What similar sentence would you say?`
     setVoiceChatHistory([{ role: 'model', text: opening, mistakes: [] }])
     setIsVoiceSpeaking(true)
     speakNaturalText(opening, speechLang, () => {
@@ -7003,8 +7467,8 @@ if (step === 1) {
         placeholder="Chọn ngôn ngữ mẹ đẻ"
       />
       <div style={onboardStyles.actions}>
-        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
-          <Icon name="back" size={16} /> Quay lại
+        <button className="icon-only-back" style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack} title="Quay lại" aria-label="Quay lại">
+          <Icon name="back" size={16} />
         </button>
         <button style={styles.button} onClick={handleNext} disabled={!profile.nativeLanguage}>
           Tiếp theo
@@ -7024,8 +7488,8 @@ if (step === 2) {
         placeholder="Chọn ngôn ngữ muốn học"
       />
       <div style={onboardStyles.actions}>
-        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
-          <Icon name="back" size={16} /> Quay lại
+        <button className="icon-only-back" style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack} title="Quay lại" aria-label="Quay lại">
+          <Icon name="back" size={16} />
         </button>
         <button style={styles.button} onClick={handleNext} disabled={!profile.targetLanguage}>
           Tiếp theo
@@ -7050,8 +7514,8 @@ if (step === 3) {
         onChange={handleChange}
       />
       <div style={onboardStyles.actions}>
-        <button style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack}>
-          <Icon name="back" size={16} /> Quay lại
+        <button className="icon-only-back" style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={handleBack} title="Quay lại" aria-label="Quay lại">
+          <Icon name="back" size={16} />
         </button>
         <button style={styles.button} onClick={handleNext} disabled={!profile.goal}>
           Tiếp theo
@@ -7114,11 +7578,14 @@ if (step === 4) {
 
       <div style={onboardStyles.actions}>
         <button
+          className="icon-only-back"
           style={{ ...styles.backButton, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
           onClick={handleBack}
           disabled={isLoading}
+          title="Quay lại"
+          aria-label="Quay lại"
         >
-          <Icon name="back" size={16} /> Quay lại
+          <Icon name="back" size={16} />
         </button>
         {levelMode === 'test' ? (
           <button
@@ -7228,6 +7695,7 @@ if (showVocab) {
 
   if (showStructures) {
     return (
+      <>
       <StructureScreen
         profileId={profileId}
         profile={profile}
@@ -7243,7 +7711,23 @@ if (showVocab) {
           setShowVoiceChat(true)
           startVoiceChatSession({ structure })
         }}
+        onStartTextChat={(structure) => {
+          setStructureChatChoice(structure)
+        }}
       />
+      {structureChatChoice && <div className="chat-topic-overlay" onClick={() => setStructureChatChoice(null)}>
+        <div className="chat-topic-dialog structure-chat-dialog" role="dialog" aria-modal="true" aria-labelledby="structure-chat-choice-title" onClick={(event) => event.stopPropagation()}>
+          <div className="chat-topic-header">
+            <div><span className="chat-topic-kicker">HỎI AI VỀ MẪU CÂU</span><h3 id="structure-chat-choice-title">Chọn đoạn chat</h3><p>{structureChatChoice.title}</p></div>
+            <button type="button" className="chat-topic-close" onClick={() => setStructureChatChoice(null)} aria-label="Đóng"><Icon name="close" size={18} /></button>
+          </div>
+          <button type="button" className="structure-chat-new" onClick={() => void startStructureTextChat(structureChatChoice)}><Icon name="plus" size={18} /> Bắt đầu đoạn chat mới <Icon name="next" size={16} /></button>
+          {conversations.length > 0 && <><div className="structure-chat-list-label">HOẶC TIẾP TỤC ĐOẠN CHAT</div><div className="structure-chat-list">
+            {conversations.map((conversation) => <button type="button" key={conversation.id} onClick={() => void startStructureTextChat(structureChatChoice, conversation)}><Icon name="cards" size={17} /><span>{conversation.title || 'Đoạn chat mới'}</span><Icon name="next" size={15} /></button>)}
+          </div></>}
+        </div>
+      </div>}
+      </>
     )
   }
 
@@ -7290,6 +7774,7 @@ if (showPractice) {
       profileId={profileId}
       profile={profile}
       cefrLevel={placementResult?.level || 'A1'}
+      speechVoice={settings.speechVoice}
       dueCount={dueCount}
       mistakeCount={mistakes.length}
       initialMode={reviewInitialMode}
@@ -7308,7 +7793,7 @@ if (showPractice) {
 
 if (showVoiceChat) {
   return (
-    <div className={`app-shell voice-chat-screen ${voiceTurnReviews.length > 0 && !voiceReviewDone ? 'voice-review-stage' : ''}`}>
+    <div className={`app-shell voice-chat-screen ${!voiceMode ? 'voice-selection-setup' : ''} ${voiceTurnReviews.length > 0 && !voiceReviewDone ? 'voice-review-stage' : ''}`}>
       <main className="voice-chat-layout">
         <aside className={`voice-scenario-sidebar ${voiceMode ? 'voice-scenario-active' : ''}`} aria-label="Chọn tình huống luyện nói">
           <div className="voice-side-heading">
@@ -7331,10 +7816,18 @@ if (showVoiceChat) {
                 const value = event.target.value
                 setVoiceScenarioSearch(value)
                 const key = value.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd')
-                const first = voiceRoleplayScenarios.find((scenario) => `${scenario.title} ${scenario.description}`.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').includes(key))
+                const first = voiceRoleplayScenarios.find((scenario) => {
+                  const group = voiceScenarioGroups.find((item) => item.ids.includes(scenario.id))
+                  return `${scenario.title} ${scenario.description} ${group?.title || ''}`.toLocaleLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').includes(key)
+                })
                 if (first) setSelectedVoiceScenario(first.id)
               }} placeholder="Tìm tình huống…" aria-label="Tìm tình huống luyện nói" /></label>
-              <div className="voice-scenario-grid voice-sidebar-scenarios">{visibleVoiceScenarios.map((scenario) => <button
+              <div className="voice-scenario-categories">{voiceScenarioGroups.map((group) => {
+                const scenarios = group.ids.map((id) => visibleVoiceScenarios.find((item) => item.id === id)).filter(Boolean)
+                if (!scenarios.length) return null
+                return <section className="voice-scenario-category" key={group.title} aria-label={group.title}>
+                  <h3>{group.title} <span>{scenarios.length}</span></h3>
+                  <div className="voice-scenario-grid voice-sidebar-scenarios">{scenarios.map((scenario) => <button
                 type="button"
                 key={scenario.id}
                 className={selectedVoiceScenario === scenario.id ? 'voice-scenario-card selected' : 'voice-scenario-card'}
@@ -7343,7 +7836,9 @@ if (showVoiceChat) {
               >
                 <span className="voice-scenario-icon" aria-hidden="true"><Icon name={voiceScenarioIconNames[scenario.id] || 'sparkle'} size={16} /></span>
                 <span className="voice-scenario-copy"><strong>{scenario.title}</strong><small>{scenario.description}</small></span>
-              </button>)}
+              </button>)}</div>
+                </section>
+              })}
               {!visibleVoiceScenarios.length && <span className="voice-scenario-empty">Không có tình huống phù hợp.</span>}</div>
             </div>}
             {voiceChatMode === 'custom' && <div className="voice-custom-scenario voice-sidebar-custom">
@@ -7384,9 +7879,10 @@ if (showVoiceChat) {
             <small className="voice-header-language">{profile.targetLanguage || 'Tiếng Anh'}</small>
           </div>
           <div className="voice-header-actions">
-            {voiceMode && <button type="button" className="voice-end-session" onClick={endVoiceChatSession} disabled={isChatLoading || isVoiceSpeaking || voiceSessionFeedbackLoading || voiceSpeakingHintLoading}>Kết thúc phiên</button>}
-            <button type="button" className="voice-header-helper-button" aria-expanded={voiceHelperOpen} aria-controls="voice-speaking-helper-panel" onClick={() => setVoiceHelperOpen((open) => !open)}><Icon name="sparkle" size={16} /><span>Trợ giúp AI</span></button>
-            <button type="button" className="voice-back-button" onClick={() => { stopVoicePractice(); setVoiceChatMode('free'); setVoiceStructureFocus(null); setShowVoiceChat(false) }}><Icon name="back" size={16} /><span>Quay lại</span></button>
+            {voiceMode && <button type="button" className="voice-pause-session" onClick={voicePaused ? resumeVoiceChat : pauseVoiceChat} aria-pressed={voicePaused} title={voicePaused ? 'Tiếp tục' : 'Tạm dừng'} aria-label={voicePaused ? 'Tiếp tục phiên nói' : 'Tạm dừng phiên nói'}><Icon name={voicePaused ? 'play' : 'pause'} size={17} /></button>}
+            {voiceMode && <button type="button" className="voice-end-session" onClick={endVoiceChatSession} disabled={isChatLoading || isVoiceSpeaking || voiceSessionFeedbackLoading || voiceSpeakingHintLoading} title="Kết thúc phiên" aria-label="Kết thúc phiên nói"><Icon name="stop" size={17} /></button>}
+            <button type="button" className="voice-header-helper-button" aria-expanded={voiceHelperOpen} aria-controls="voice-speaking-helper-panel" onClick={() => setVoiceHelperOpen((open) => !open)} title="Trợ giúp AI" aria-label="Trợ giúp AI"><Icon name="sparkle" size={17} /></button>
+            <button type="button" className="voice-back-button" onClick={() => { stopVoicePractice(); setVoiceChatMode('free'); setVoiceStructureFocus(null); setShowVoiceChat(false) }} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={17} /></button>
           </div>
         </header>
 
@@ -7396,7 +7892,22 @@ if (showVoiceChat) {
               <div className="voice-message-avatar">{msg.role === 'user' ? (username?.slice(0, 1).toUpperCase() || 'B') : 'AI'}</div>
               <div className="voice-message-content">
                 <div className="voice-message-label">{msg.role === 'user' ? 'Bạn' : 'AI'}</div>
-                <div className="voice-message-text">{formatMessage(msg.text)}</div>
+                <div className="voice-message-text">{String(msg.text || '').split(/([\p{L}]+(?:['’\-][\p{L}]+)*)/u).map((part, partIndex) =>
+                    /^[\p{L}]+(?:['’\-][\p{L}]+)*$/u.test(part)
+                      ? <button key={partIndex} type="button" className="voice-lookup-word" onClick={() => lookupVoiceWord(part, msg.text, index)} title={`Tra nghĩa: ${part}`}>{part}</button>
+                      : <span key={partIndex}>{part}</span>)}</div>
+                {voiceWordLookup?.messageIndex === index && <div className="voice-word-result" role="status">
+                  <div className="voice-word-result-top"><strong>{voiceWordLookup.headword || voiceWordLookup.word}</strong><button type="button" onClick={() => { setVoiceWordLookup(null); voiceWordLookupRequestRef.current += 1 }} aria-label="Đóng nghĩa của từ">×</button></div>
+                  {voiceWordLookup.loading ? <span>Đang tra nghĩa…</span> : voiceWordLookup.error ? <span>{voiceWordLookup.error}</span> : <>
+                    <div className="voice-word-result-section"><span className="voice-word-result-label">NGHĨA TRONG CÂU NÀY</span><strong>{voiceWordLookup.meaning}</strong></div>
+                    {voiceWordLookup.contextSentence && <div className="voice-word-result-section"><span className="voice-word-result-label">CÂU ĐANG NÓI</span><p>{voiceWordLookup.contextSentence}</p>{voiceWordLookup.contextTranslation && <small>{voiceWordLookup.contextTranslation}</small>}</div>}
+                    {voiceWordLookup.usage && <div className="voice-word-result-section"><span className="voice-word-result-label">CÁCH DÙNG</span><p>{voiceWordLookup.usage}</p></div>}
+                    {voiceWordLookup.otherMeaning && <small>Nghĩa khác: {voiceWordLookup.otherMeaning}</small>}
+                    {voiceWordLookup.examples?.length > 0 && <div className="voice-word-result-section"><span className="voice-word-result-label">VÍ DỤ KHÁC</span>{voiceWordLookup.examples.map((example, exampleIndex) => <div className="voice-word-example" key={exampleIndex}><p>{example.sentence}</p><small>{example.translation}</small></div>)}</div>}
+                    <button type="button" className="voice-word-save" onClick={saveVoiceWordToFlashcard} disabled={voiceWordLookup.saving || voiceWordLookup.saved}>{voiceWordLookup.saving ? 'Đang lưu…' : voiceWordLookup.saved ? (voiceWordLookup.alreadySaved ? 'Đã có trong flashcard' : 'Đã lưu vào flashcard') : 'Thêm vào flashcard'}</button>
+                    {voiceWordLookup.saveError && <small role="alert">{voiceWordLookup.saveError}</small>}
+                  </>}
+                </div>}
               </div>
             </div>
           ))}
@@ -7450,7 +7961,7 @@ if (showVoiceChat) {
               <div className="voice-live-caption-heading"><span className="voice-live-dot" style={{ background: 'var(--danger)', boxShadow: 'none', animation: 'none' }} /> NHẬN DIỆN ĐANG GẶP LỖI</div>
               <div className="voice-live-caption-text">{speechErrorMessage(voiceInput.error)}</div>
               <div className="voice-review-actions">
-                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript}>
+                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript} disabled={voicePaused}>
                   <Icon name="mic" size={14} /> Thử lại
                 </button>
               </div>
@@ -7477,10 +7988,10 @@ if (showVoiceChat) {
                 rows={2}
               />
               <div className="voice-review-actions">
-                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript}>
+                <button type="button" className="voice-review-again" onClick={retryVoiceTranscript} disabled={voicePaused}>
                   <Icon name="mic" size={14} /> Nói lại
                 </button>
-                <button type="button" className="voice-review-send" onClick={sendVoiceTranscript} disabled={!voicePendingTranscript.trim() || isChatLoading}>
+                <button type="button" className="voice-review-send" onClick={sendVoiceTranscript} disabled={voicePaused || !voicePendingTranscript.trim() || isChatLoading}>
                   Gửi cho AI{autoSendVoice && voiceAutoSendCountdown > 0 ? ` · ${voiceAutoSendCountdown}s` : ''}
                 </button>
               </div>
@@ -7521,12 +8032,12 @@ if (showVoiceChat) {
         </section>
 
         <footer className={`voice-controls ${!voiceMode ? 'voice-controls-idle' : ''} ${!voiceMode && (voiceSessionFeedback || voiceSessionFeedbackError || voiceSessionFeedbackLoading) ? 'voice-controls-finished' : ''}`}>
-          {!voiceSessionFeedback && !voiceSessionFeedbackError && !voiceSessionFeedbackLoading && voiceMode && <p>Nói bằng {profile.targetLanguage || 'tiếng Anh'} · AI sẽ chỉ đọc bằng ngôn ngữ này</p>}
+          {!voiceSessionFeedback && !voiceSessionFeedbackError && !voiceSessionFeedbackLoading && voiceMode && <p>{voicePaused ? 'Đã tạm dừng · Chọn Tiếp tục để bật lại micro' : `Nói bằng ${profile.targetLanguage || 'tiếng Anh'} · Chạm vào từ trong lời thoại AI để tra nghĩa`}</p>}
           {!voiceSessionFeedback && !voiceSessionFeedbackError && !voiceSessionFeedbackLoading && voiceMode && <button
             type="button"
             className={`voice-mic-button voice-mic-button-active ${voiceInput.listening ? 'voice-mic-button-listening' : ''}`}
             onClick={() => voiceInput.listening ? voiceInput.stop() : voiceInput.start()}
-            disabled={!voiceInput.supported || isChatLoading || isVoiceSpeaking || voiceSessionFeedbackLoading || voiceSpeakingHintLoading || voiceChallengeLoading || Boolean(voiceChallenge) || Boolean(voicePendingTranscript) || voiceInput.transcribing}
+            disabled={voicePaused || !voiceInput.supported || isChatLoading || isVoiceSpeaking || voiceSessionFeedbackLoading || voiceSpeakingHintLoading || voiceChallengeLoading || Boolean(voiceChallenge) || Boolean(voicePendingTranscript) || voiceInput.transcribing}
             aria-pressed={voiceInput.listening}
             aria-label={voiceInput.listening ? 'Dừng nghe giọng nói' : 'Bắt đầu nói'}
             title={voiceInput.listening ? 'Dừng nghe' : 'Bắt đầu nói'}
@@ -7546,6 +8057,8 @@ if (showVoiceChat) {
                     ? 'Phiên nói đã kết thúc.'
                     : !voiceMode
                       ? 'Chọn cách luyện nói ở cột bên trái để bắt đầu.'
+                    : voicePaused
+                      ? 'Phiên đang tạm dừng. Micro và giọng đọc đã dừng.'
                     : voiceError || (voiceInput.error
                 ? speechErrorMessage(voiceInput.error)
                 : voicePendingTranscript
@@ -7632,25 +8145,45 @@ return (
     <style>{fadeStyle}</style>
     <style>{layoutCss}</style>
     <style>{sidebarCss}</style>
+    {conversationMenu && <>
+      <div className="conversation-menu-dismiss" onClick={() => setConversationMenu(null)} onContextMenu={(event) => { event.preventDefault(); setConversationMenu(null) }} />
+      <div className="conversation-context-menu" style={{ left: Math.max(8, conversationMenu.x), top: Math.max(8, conversationMenu.y) }} role="menu">
+        <button type="button" role="menuitem" onClick={() => { setRenameConversation(conversationMenu.conversation); setManagementName(conversationMenu.conversation.title || ''); setConversationMenu(null) }}><Icon name="edit" size={15} /> Đổi tên</button>
+        <button type="button" role="menuitem" onClick={() => updateConversation(conversationMenu.conversation.id, { pinned: !conversationMenu.conversation.pinned })}><Icon name="pin" size={15} /> {conversationMenu.conversation.pinned ? 'Bỏ ghim' : 'Ghim'}</button>
+        <div className="conversation-menu-label">CHUYỂN VÀO SECTION</div>
+        {conversationSections.map((section) => <button type="button" role="menuitem" key={section.id} onClick={() => updateConversation(conversationMenu.conversation.id, { sectionId: section.id, pinned: false })}><Icon name="folder" size={15} /> {section.name}</button>)}
+        {conversationMenu.conversation.section_id && <button type="button" role="menuitem" onClick={() => updateConversation(conversationMenu.conversation.id, { sectionId: null })}><Icon name="back" size={15} /> Bỏ khỏi section</button>}
+        <button type="button" role="menuitem" onClick={() => { setNewSectionFor(conversationMenu.conversation); setManagementName(''); setConversationMenu(null) }}><Icon name="plus" size={15} /> Tạo section mới</button>
+        <div className="conversation-menu-divider" />
+        <button type="button" role="menuitem" className="conversation-menu-danger" onClick={() => { setConfirmDelete(conversationMenu.conversation); setConversationMenu(null) }}><Icon name="trash" size={15} /> Xóa</button>
+      </div>
+    </>}
+    {(renameConversation || newSectionFor) && <div className="chat-topic-overlay" onClick={() => { setRenameConversation(null); setNewSectionFor(null) }}>
+      <form className="conversation-name-dialog" onClick={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); if (renameConversation) saveConversationName(); else createConversationSection() }}>
+        <h3>{renameConversation ? 'Đổi tên đoạn chat' : 'Tạo section mới'}</h3>
+        <input autoFocus maxLength={renameConversation ? 100 : 60} value={managementName} onChange={(event) => setManagementName(event.target.value)} placeholder={renameConversation ? 'Tên đoạn chat' : 'Tên section'} />
+        <div><button type="button" onClick={() => { setRenameConversation(null); setNewSectionFor(null) }}>Hủy</button><button type="submit" disabled={!managementName.trim()}>{renameConversation ? 'Lưu' : 'Tạo section'}</button></div>
+      </form>
+    </div>}
     
     {showTopicPicker && (
-      <div style={settingsStyles.overlay} onClick={() => setShowTopicPicker(false)}>
-        <div style={settingsStyles.modal} onClick={(e) => e.stopPropagation()}>
-          <div style={settingsStyles.header}>
-            <h3 style={{ margin: 0, fontSize: fs(18), fontWeight: '700' }}>Chọn chủ đề luyện tập</h3>
-            <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setShowTopicPicker(false)}>
-              <Icon name="close" />
-            </button>
+      <div className="chat-topic-overlay" onClick={() => setShowTopicPicker(false)}>
+        <div className="chat-topic-dialog" role="dialog" aria-modal="true" aria-labelledby="chat-topic-title" onClick={(e) => e.stopPropagation()}>
+          <div className="chat-topic-header">
+            <div><span className="chat-topic-kicker">ĐOẠN CHAT MỚI</span><h3 id="chat-topic-title">Bạn muốn trò chuyện về gì?</h3><p>Chọn một chủ đề để AI bắt đầu cùng bạn.</p></div>
+            <button type="button" className="chat-topic-close" onClick={() => setShowTopicPicker(false)} aria-label="Đóng"><Icon name="close" size={18} /></button>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <div className="chat-topic-grid">
             {topicOptions.map((t) => (
-                <button
+              <button
+                type="button"
                 key={t.id}
-                className="level-card"
-                style={{ ...styles.sidebarButton, background: 'var(--surface-soft)', fontWeight: '500' }}
+                className="chat-topic-option"
                 onClick={() => selectTopicAndStart(t.id)}
               >
-                {t.label}
+                <span className="chat-topic-icon"><Icon name={t.icon} size={19} /></span>
+                <span className="chat-topic-copy"><strong>{t.label}</strong><small>{t.description}</small></span>
+                <Icon name="next" size={16} />
               </button>
             ))}
           </div>
@@ -7763,6 +8296,7 @@ return (
     )}
     {/* Sidebar trái */}
         <aside className="sidebar" style={styles.sidebarV2}>
+      <div className="sidebar-brand"><span>ENGLISH AI TUTOR</span><strong>Không gian học tập</strong></div>
       <button className="new-chat-button" style={styles.newChatButton} onClick={handleNewConversation}>
         <Icon name="plus" size={16} /> Đoạn chat mới
       </button>
@@ -7773,6 +8307,9 @@ return (
         </button>
         <button className="nav-item" style={{ ...styles.navItem, ...(showVoiceChat ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : {}) }} onClick={() => { stopVoicePractice(); setVoiceChatHistory([]); setVoiceChatMode('free'); setActiveVoiceScenarioPrompt(''); setActiveVoiceScenarioTitle(''); setVoiceError(''); setShowVoiceChat(true) }}>
           <Icon name="mic" size={17} /> Trò chuyện bằng giọng nói
+        </button>
+        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('listening'); setShowPractice(true) }}>
+          <Icon name="speaker" size={17} /> Luyện nghe
         </button>
         <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('setup'); setShowPractice(true) }}>
           <Icon name="repeat" size={17} /> <span style={{ flex: 1, textAlign: 'left' }}>Ôn tập</span>
@@ -7793,28 +8330,12 @@ return (
       </nav>
 
       <div className="conversation-list" style={styles.convSectionV2}>
-        {conversations.length > 0 && <div style={styles.sectionLabel}>Đoạn chat</div>}
-        {conversations.map((c) => (
-          <div
-            key={c.id}
-            className={`conv-item ${c.id === currentConversationId ? 'conv-item-active' : ''}`}
-            style={{
-              ...styles.convItem,
-              ...(c.id === currentConversationId ? styles.convItemActive : {})
-            }}
-            onClick={() => { stopVoicePractice(); switchConversation(c.id) }}
-          >
-            <span style={styles.convTitle}>{c.title || 'Đoạn chat mới'}</span>
-            <button
-              className="conv-delete"
-              style={styles.convDelete}
-              onClick={(e) => handleDeleteConversation(c, e)}
-              title="Xoá đoạn chat"
-            >
-              <Icon name="trash" size={13} />
-            </button>
-          </div>
-        ))}
+        {conversations.some((c) => c.pinned) && <><div style={styles.sectionLabel}>Đã ghim</div>{conversations.filter((c) => c.pinned).map(renderConversation)}</>}
+        {conversationSections.map((section) => <div key={section.id}>
+          <div style={styles.sectionLabel}>{section.name}</div>
+          {conversations.filter((c) => !c.pinned && c.section_id === section.id).map(renderConversation)}
+        </div>)}
+        {conversations.some((c) => !c.pinned && !c.section_id) && <><div style={styles.sectionLabel}>Đoạn chat</div>{conversations.filter((c) => !c.pinned && !c.section_id).map(renderConversation)}</>}
       </div>
 
       <div style={{ position: 'relative' }}>
@@ -7828,6 +8349,7 @@ return (
                 onClick={() => {
                   setShowProfileMenu(false)
                   stopVoicePractice()
+                  setActiveChatStructureSuggestion(null)
                   onOpenSettings && onOpenSettings()
                 }}
               >
@@ -7874,29 +8396,21 @@ return (
 
     {/* Khu vực chat giữa */}
     <main style={styles.mainArea} className="chat-main">
+      <div className="chat-panel">
             <div className="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
-        <h2 className="chat-title" style={{ ...styles.question, fontSize: fs(26) }}>Luyện tập cùng AI</h2>
-        <div style={onboardStyles.levelBar}>
-          <button
-            style={{ ...onboardStyles.levelStep, ...(placementResult?.level === 'A1' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
-            onClick={() => handleChangeLevel(-1)}
-            disabled={placementResult?.level === 'A1'}
-            title="AI nói dễ hơn một bậc"
-          >
-            <Icon name="minus" size={13} /> Dễ hơn
-          </button>
-          <span style={onboardStyles.levelPill}>{placementResult?.level}</span>
-          <button
-            style={{ ...onboardStyles.levelStep, ...(placementResult?.level === 'C2' ? { opacity: 0.4, cursor: 'not-allowed' } : {}) }}
-            onClick={() => handleChangeLevel(1)}
-            disabled={placementResult?.level === 'C2'}
-            title="AI nói khó hơn một bậc"
-          >
-            Khó hơn <Icon name="plus" size={13} />
-          </button>
-          {levelNotice && <span style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>{levelNotice}</span>}
-        </div>
+        <h2 className="chat-title" style={{ ...styles.question, fontSize: fs(26) }}>
+          {conversations.find((conversation) => conversation.id === currentConversationId)?.title || pendingConversationTitle || 'Đoạn chat mới'}
+        </h2>
       </div>
+      {chatSearchOpen && <div className="chat-search-bar">
+        <input autoFocus aria-label="Tìm trong đoạn chat" placeholder="Tìm trong đoạn chat..." value={chatSearchQuery} onChange={(event) => { setChatSearchQuery(event.target.value); setChatSearchIndex(0); setVisibleChatCount(chatHistory.length) }} onKeyDown={(event) => { if (event.key === 'Enter' && chatSearchMatches.length) { event.preventDefault(); setChatSearchIndex((index) => (index + (event.shiftKey ? -1 : 1) + chatSearchMatches.length) % chatSearchMatches.length) } }} />
+        <span>{chatSearchQuery ? `${chatSearchMatches.length ? Math.min(chatSearchIndex + 1, chatSearchMatches.length) : 0}/${chatSearchMatches.length}` : '0/0'}</span>
+        <span className="chat-search-divider" aria-hidden="true" />
+        <button type="button" aria-label="Kết quả trước" disabled={!chatSearchMatches.length} onClick={() => setChatSearchIndex((index) => (index - 1 + chatSearchMatches.length) % chatSearchMatches.length)}><Icon name="chevron" size={15} /></button>
+        <button type="button" aria-label="Kết quả sau" disabled={!chatSearchMatches.length} onClick={() => setChatSearchIndex((index) => (index + 1) % chatSearchMatches.length)}><Icon name="chevron" size={15} /></button>
+        <span className="chat-search-divider" aria-hidden="true" />
+        <button type="button" aria-label="Đóng tìm kiếm" onClick={() => { setChatSearchOpen(false); setChatSearchQuery('') }}><Icon name="close" size={15} /></button>
+      </div>}
 
       <div ref={setChatBox} style={styles.chatBoxFull} className="chat-transcript">
         {chatHistory.length === 0 && !isChatLoading && (
@@ -7912,9 +8426,20 @@ return (
           </div>
         )}
 
-       {chatHistory.map((msg, i) => (
+       {chatHistory.length > visibleChatCount && <button type="button" className="chat-load-older" onClick={() => {
+         const el = chatBoxRef.current
+         const previousHeight = el?.scrollHeight || 0
+         const previousTop = el?.scrollTop || 0
+         setVisibleChatCount((count) => count + 80)
+         window.requestAnimationFrame(() => {
+           if (el) el.scrollTop = previousTop + el.scrollHeight - previousHeight
+         })
+       }}>Xem tin nhắn cũ hơn</button>}
+       {chatHistory.slice(-visibleChatCount).map((msg, i) => (
   <div
-    key={i}
+    key={chatHistory.length - Math.min(chatHistory.length, visibleChatCount) + i}
+    data-chat-index={chatHistory.length - Math.min(chatHistory.length, visibleChatCount) + i}
+    className={chatSearchMatches[chatSearchIndex] === chatHistory.length - Math.min(chatHistory.length, visibleChatCount) + i ? 'chat-search-current' : ''}
     style={{
       display: 'flex',
       flexDirection: 'column',
@@ -7939,7 +8464,10 @@ return (
           style={styles.speakButton}
           onClick={() => {
             if (!voiceModeRef.current) {
-              speakNaturalText(msg.text, speechLang, undefined, settings.speechVoice)
+              const spokenText = /^en(?:-|$)/i.test(speechLang)
+                ? getVoiceSpeechText(msg.text, profile.nativeLanguage)
+                : msg.text
+              speakNaturalText(spokenText || msg.text, speechLang, undefined, settings.speechVoice)
               return
             }
             speechControlRef.current?.stop()
@@ -7980,7 +8508,25 @@ return (
     )}
   </div>
 ))}
+    {activeChatStructureSuggestion && (() => {
+      const suggestion = activeChatStructureSuggestion
+      // Repeated errors such as "I likes" are present-simple verb forms.
+      // Keep the broader agreement lesson available elsewhere, but send this
+      // chat recommendation to the tense lesson that teaches both subject forms.
+      const structureId = suggestion.skill === 'agreement'
+        ? 'present_simple'
+        : structureIdForFocus(suggestion.skill, suggestion.focus)
+      const structure = STRUCTURES.find((item) => item.id === structureId)
+      if (!structure) return null
+      return <div className="chat-structure-suggestion">
+        <span>Bạn đã gặp lỗi này vài lần. Tham khảo mẫu câu <strong>{structure.title}</strong> để củng cố nhé.</span>
+        <button type="button" onClick={() => { setActiveChatStructureSuggestion(null); setInitialStructureId(structureId); setShowStructures(true) }}>
+          Xem mẫu câu <Icon name="next" size={14} />
+        </button>
+      </div>
+    })()}
         {isChatLoading && <TypingIndicator />}
+      </div>
       </div>
 
            <div className="chat-composer" style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '980px' }}>
@@ -8925,7 +9471,13 @@ function MicrophoneTest() {
       contextRef.current = context
       const analyser = context.createAnalyser()
       analyser.fftSize = 512
-      context.createMediaStreamSource(stream).connect(analyser)
+      const source = context.createMediaStreamSource(stream)
+      source.connect(analyser)
+      const monitor = context.createGain()
+      monitor.gain.value = 0.8
+      source.connect(monitor)
+      monitor.connect(context.destination)
+      await context.resume()
       const samples = new Uint8Array(analyser.fftSize)
       setActive(true)
       const measure = () => {
@@ -8947,7 +9499,7 @@ function MicrophoneTest() {
     <div style={{ ...rowStyles.row, alignItems: 'flex-start', flexDirection: 'column', gap: '10px' }}>
       <div style={rowStyles.textCol}>
         <div style={rowStyles.title}>Kiểm tra micro</div>
-        <div style={rowStyles.desc}>Nói thử để xem ứng dụng có nhận được âm thanh từ micro không.</div>
+        <div style={rowStyles.desc}>Nói thử để nghe giọng của bạn trực tiếp qua loa hoặc tai nghe. Nên dùng tai nghe để tránh tiếng hú.</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%' }}>
         <button
@@ -8968,7 +9520,7 @@ function MicrophoneTest() {
   )
 }
 
-function SettingsModal({ settings, onChange, onClose, profileId }) {
+function SettingsModal({ settings, onChange, onClose, profileId, levelControl }) {
   const [confirmClearMemory, setConfirmClearMemory] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
   const [memoryMessage, setMemoryMessage] = useState('')
@@ -9051,6 +9603,18 @@ function SettingsModal({ settings, onChange, onClose, profileId }) {
           />
         </div>
 
+        {levelControl?.level && <div style={rowStyles.row}>
+          <div style={rowStyles.textCol}>
+            <div style={rowStyles.title}>Độ khó hội thoại</div>
+            <div style={rowStyles.desc}>Điều chỉnh trình độ AI dùng khi trò chuyện.</div>
+          </div>
+          <div className="settings-level-control">
+            <button type="button" disabled={levelControl.level === 'A1'} onClick={() => levelControl.setLevel(LEVELS[LEVELS.indexOf(levelControl.level) - 1])}>Dễ hơn</button>
+            <span>{levelControl.level}</span>
+            <button type="button" disabled={levelControl.level === 'C2'} onClick={() => levelControl.setLevel(LEVELS[LEVELS.indexOf(levelControl.level) + 1])}>Khó hơn</button>
+          </div>
+        </div>}
+
         <div style={{ ...rowStyles.row, ...rowStyles.rowLast }}>
           <div style={rowStyles.textCol}>
             <div style={rowStyles.title}>Gợi ý sửa lỗi trong khung chat</div>
@@ -9130,6 +9694,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
   const [activeProfileId, setActiveProfileId] = useState(null)
+  const [levelControl, setLevelControl] = useState(null)
   useLayoutEffect(() => {
     const apply = () => {
       const isDark =
@@ -9168,6 +9733,7 @@ function App() {
         onOpenSettings={() => setShowSettings(true)}
         onLoggedInChange={setLoggedIn}
         onActiveProfileChange={setActiveProfileId}
+        onLevelControlChange={setLevelControl}
       />
       {!loggedIn && (
         <button
@@ -9184,6 +9750,7 @@ function App() {
           onChange={updateSettings}
           onClose={() => setShowSettings(false)}
           profileId={activeProfileId}
+          levelControl={levelControl}
         />
       )}
     </>

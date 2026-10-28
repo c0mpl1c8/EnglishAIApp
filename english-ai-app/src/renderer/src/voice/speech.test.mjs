@@ -2,12 +2,48 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   cleanSpeechText,
+  cleanRepeatedTranscript,
+  chunkSpeechText,
+  playSpeechAudio,
+  setSpeechPlaybackRate,
+  stopSpeechAudio,
   createAudioSpeechCapture,
   decodeSpeechAudio,
   createSpeechRecognition,
   speakText,
   speechErrorMessage
 } from './speech.mjs'
+
+test('splits a long listening passage into complete short synthesis chunks', () => {
+  const passage = 'I finished the report early. My manager asked me to meet the team on Friday. '.repeat(8).trim()
+  const chunks = chunkSpeechText(passage, 180)
+  assert.ok(chunks.length > 1)
+  assert.ok(chunks.every((chunk) => chunk.length <= 180))
+  assert.equal(chunks.join(' '), passage)
+})
+
+test('changes playback speed during an active listening clip', () => {
+  let source
+  class FakeAudioContext {
+    state = 'running'
+    createBufferSource() { source = { playbackRate: { value: 1 }, connect() {}, start() {}, stop() {} }; return source }
+    createBuffer() { return { copyToChannel() {} } }
+    get destination() { return {} }
+    close() { this.state = 'closed'; return Promise.resolve() }
+  }
+  const environment = { AudioContext: FakeAudioContext }
+  assert.equal(playSpeechAudio({ environment, audio: new Float32Array([0, 0.1]), playbackRate: 0.75 }), true)
+  assert.equal(source.playbackRate.value, 0.75)
+  assert.equal(setSpeechPlaybackRate(1.25), true)
+  assert.equal(source.playbackRate.value, 1.25)
+  stopSpeechAudio(environment)
+})
+
+test('removes abnormal repeated words and phrases from local transcription', () => {
+  assert.equal(cleanRepeatedTranscript('Oh, there was some raft. If you know, you know, you know, you know, you know.'), 'Oh, there was some raft. If you know,')
+  assert.equal(cleanRepeatedTranscript('I think I think I think this works'), 'I think this works')
+  assert.equal(cleanRepeatedTranscript('Very very good'), 'Very very good')
+})
 
 class FakeRecognition {
   constructor() {

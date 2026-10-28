@@ -28,6 +28,29 @@ export function cleanSpeechText(text) {
     .trim()
 }
 
+export function cleanRepeatedTranscript(text) {
+  const words = String(text ?? '').trim().split(/\s+/).filter(Boolean)
+  const normalized = (word) => word.toLocaleLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
+  const result = []
+  for (let index = 0; index < words.length;) {
+    let repeated = false
+    for (let size = 1; size <= Math.min(5, Math.floor((words.length - index) / 3)); size++) {
+      const phrase = words.slice(index, index + size).map(normalized).join(' ')
+      if (!phrase.trim()) continue
+      let count = 1
+      while (index + (count + 1) * size <= words.length &&
+        words.slice(index + count * size, index + (count + 1) * size).map(normalized).join(' ') === phrase) count++
+      if (count < 3) continue
+      result.push(...words.slice(index, index + size))
+      index += count * size
+      repeated = true
+      break
+    }
+    if (!repeated) result.push(words[index++])
+  }
+  return result.join(' ')
+}
+
 export async function decodeSpeechAudio(blob, { environment = globalThis, targetSampleRate = 16000 } = {}) {
   const AudioContext = environment?.AudioContext || environment?.webkitAudioContext
   if (typeof AudioContext !== 'function') throw new Error('LOCAL_ASR_FAILED')
@@ -408,6 +431,12 @@ export function speakText({ environment = globalThis, text, lang = 'en-US', onEn
 let activeSpeechContext = null
 let activeSpeechSource = null
 
+export function setSpeechPlaybackRate(rate) {
+  if (!activeSpeechSource?.playbackRate) return false
+  activeSpeechSource.playbackRate.value = Math.min(1.5, Math.max(0.75, Number(rate) || 1))
+  return true
+}
+
 export function stopSpeechAudio(environment = globalThis) {
   try { activeSpeechSource?.stop() } catch { /* already stopped */ }
   activeSpeechSource = null
@@ -417,7 +446,30 @@ export function stopSpeechAudio(environment = globalThis) {
   environment?.speechSynthesis?.cancel()
 }
 
-export function playSpeechAudio({ environment = globalThis, audio, sampleRate = 24000, onEnd } = {}) {
+export function chunkSpeechText(text, maxLength = 180) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return []
+  const sentences = normalized.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [normalized]
+  const chunks = []
+  let current = ''
+  for (const sentenceText of sentences) {
+    let sentence = sentenceText.trim()
+    while (sentence.length > maxLength) {
+      if (current) { chunks.push(current); current = '' }
+      let cut = sentence.lastIndexOf(' ', maxLength)
+      if (cut < maxLength / 2) cut = maxLength
+      chunks.push(sentence.slice(0, cut).trim())
+      sentence = sentence.slice(cut).trim()
+    }
+    if (!sentence) continue
+    if (current && `${current} ${sentence}`.length > maxLength) { chunks.push(current); current = '' }
+    current = current ? `${current} ${sentence}` : sentence
+  }
+  if (current) chunks.push(current)
+  return chunks
+}
+
+export function playSpeechAudio({ environment = globalThis, audio, sampleRate = 24000, playbackRate = 1, onEnd } = {}) {
   const AudioContext = environment?.AudioContext || environment?.webkitAudioContext
   if (typeof AudioContext !== 'function' || !audio?.length) {
     onEnd?.()
@@ -431,6 +483,7 @@ export function playSpeechAudio({ environment = globalThis, audio, sampleRate = 
     const buffer = context.createBuffer(1, audio.length, sampleRate)
     buffer.copyToChannel(audio instanceof Float32Array ? audio : Float32Array.from(audio), 0)
     source.buffer = buffer
+    source.playbackRate.value = Math.min(1.5, Math.max(0.75, Number(playbackRate) || 1))
     source.connect(context.destination)
     activeSpeechContext = context
     activeSpeechSource = source

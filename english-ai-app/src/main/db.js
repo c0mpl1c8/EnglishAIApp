@@ -61,6 +61,7 @@ db.exec(`
 addColumnIfMissing('mistakes', 'next_review_at', 'TEXT')
 addColumnIfMissing('mistakes', 'interval_days', 'INTEGER DEFAULT 0')
 addColumnIfMissing('mistakes', 'skill', 'TEXT')
+addColumnIfMissing('mistakes', 'focus', 'TEXT')
 
 // ===== chat_messages =====
 db.exec(`
@@ -73,6 +74,7 @@ db.exec(`
   )
 `)
 addColumnIfMissing('chat_messages', 'conversation_id', 'INTEGER')
+addColumnIfMissing('chat_messages', 'structure_suggestion', 'TEXT')
 
 // ===== conversations =====
 db.exec(`
@@ -85,6 +87,16 @@ db.exec(`
   )
 `)
 addColumnIfMissing('conversations', 'topic', 'TEXT')
+addColumnIfMissing('conversations', 'pinned', 'INTEGER DEFAULT 0')
+addColumnIfMissing('conversations', 'section_id', 'INTEGER')
+db.exec(`
+  CREATE TABLE IF NOT EXISTS conversation_sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 
 // ===== vocabulary =====
 db.exec(`
@@ -171,6 +183,18 @@ db.exec(`
   )
 `)
 db.exec(`
+  CREATE TABLE IF NOT EXISTS listening_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    topic TEXT NOT NULL,
+    title TEXT NOT NULL,
+    total INTEGER NOT NULL,
+    correct INTEGER NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
+db.exec(`
   CREATE TABLE IF NOT EXISTS game_seen (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_id INTEGER,
@@ -178,5 +202,19 @@ db.exec(`
     text TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
+`)
+
+// Keep profile-scoped history and flashcard lookups fast as learner data grows.
+// The vocabulary index uses the same NOCASE collation as duplicate checks.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_chat_profile_role_id ON chat_messages(profile_id, role, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_chat_conversation_id ON chat_messages(conversation_id, id);
+  CREATE INDEX IF NOT EXISTS idx_conversations_profile_updated ON conversations(profile_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_mistakes_profile_created ON mistakes(profile_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_mistakes_profile_skill_focus ON mistakes(profile_id, skill, lower(COALESCE(focus, category)));
+  CREATE INDEX IF NOT EXISTS idx_vocabulary_profile_word ON vocabulary(profile_id, word COLLATE NOCASE);
+  CREATE INDEX IF NOT EXISTS idx_skill_events_profile_id ON skill_events(profile_id, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_quiz_attempts_profile_mode_id ON quiz_attempts(profile_id, mode, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_game_seen_profile_kind_id ON game_seen(profile_id, kind, id DESC);
 `)
 export default db
