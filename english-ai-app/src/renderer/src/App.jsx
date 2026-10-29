@@ -3,6 +3,8 @@ import { chunkSpeechText, cleanRepeatedTranscript, cleanSpeechText, createAudioS
 import { matchesSpokenSentence } from './voice/answer.mjs'
 import { isListeningAnswerCorrect } from './voice/listening.mjs'
 import { selectVoiceContextHistory } from './voice/history.mjs'
+import { normalizeFocusName, structureIdForAssessmentFocus } from '../../main/assessmentFocus.mjs'
+import { structureLessons } from './structureLessons.mjs'
 
 const fs = (px) => `calc(${px}px * var(--fs))`
 
@@ -1600,8 +1602,9 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
   const [score, setScore] = useState(0)
   const [assessmentAnswers, setAssessmentAnswers] = useState({})
   const [assessmentLevel, setAssessmentLevel] = useState(cefrLevel)
+  const [assessmentRank, setAssessmentRank] = useState(null)
   const [nextAssessmentLevel, setNextAssessmentLevel] = useState(null)
-  const [a1PassStreak, setA1PassStreak] = useState(0)
+  const [nextAssessmentRank, setNextAssessmentRank] = useState(null)
   const [promotedLevel, setPromotedLevel] = useState(null)
   const [errMsg, setErrMsg] = useState('')
   const [log, setLog] = useState([])
@@ -1614,7 +1617,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
     setAssessmentAnswers({})
     setPromotedLevel(null)
     setNextAssessmentLevel(null)
-    setA1PassStreak(0)
+    setNextAssessmentRank(null)
     savedRef.current = false
     if (preset) {
       setQuestions(shuffleArr(preset).map(reshuffleQuestion))
@@ -1636,6 +1639,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
         })
     if (res.success && res.questions.length > 0) {
       if (res.assessmentLevel) setAssessmentLevel(res.assessmentLevel)
+      setAssessmentRank(res.assessmentRank || null)
       setQuestions(res.questions)
       setIndex(0)
       setPicked(null)
@@ -1701,6 +1705,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
         explanation: q.explanation,
         skill: q.skill,
         focus,
+        structureId: q.structureId || null,
         difficulty: q.difficulty,
         section: q.section,
         blankNumber: q.blankNumber,
@@ -1729,7 +1734,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
       onLevelPromoted?.(saved.promotedLevel)
     }
     setNextAssessmentLevel(saved.nextAssessmentLevel || null)
-    setA1PassStreak(saved.a1PassStreak || 0)
+    setNextAssessmentRank(saved.nextAssessmentRank || null)
     setPhase('done')
   }
 
@@ -1833,7 +1838,11 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
       <>
         <h2 style={styles.question}>Kết quả</h2>
         <div style={{ fontSize: fs(40), fontWeight: '700', color: 'var(--accent)' }}>{score}/{questions.length}</div>
-        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{attemptMode === 'assessment' ? pct >= 90 ? promotedLevel ? `Đạt bài ${assessmentLevel}. Trình độ của bạn đã tăng lên ${promotedLevel}.` : assessmentLevel === 'C2' ? 'Đã đạt bài ở mức C2.' : assessmentLevel === 'A1' && nextAssessmentLevel === 'A1' ? `Đạt ${a1PassStreak}/3 bài A1 liên tiếp từ 90% trở lên. Bài tiếp theo vẫn ở mức A1.` : `Đạt bài ${assessmentLevel}. Bài tiếp theo sẽ khó hơn.` : `Chưa đạt 90% ở mức ${assessmentLevel}. Bạn có thể làm một đề mới cùng mức để luyện thêm.` : msg}</p>
+        <p style={{ color: 'var(--text-muted)', margin: 0 }}>{attemptMode === 'assessment' ? assessmentLevel === 'A1' && assessmentRank
+          ? pct >= 90
+            ? promotedLevel ? 'Bạn đã vượt qua bậc 5/5 của A1. Trình độ của bạn đã tăng lên A2.' : `Đạt từ 90%: lên bậc ${nextAssessmentRank}/5 của A1.`
+            : assessmentRank === 1 ? 'Dưới 90%: bạn ở lại bậc 1/5 của A1 để luyện thêm.' : `Dưới 90%: lùi về bậc ${nextAssessmentRank}/5 của A1 để củng cố.`
+          : pct >= 90 ? promotedLevel ? `Đạt bài ${assessmentLevel}. Trình độ của bạn đã tăng lên ${promotedLevel}.` : assessmentLevel === 'C2' ? 'Đã đạt bài ở mức C2.' : `Đạt bài ${assessmentLevel}. Bài tiếp theo sẽ khó hơn.` : `Chưa đạt 90% ở mức ${assessmentLevel}. Bạn có thể làm một đề mới cùng mức để luyện thêm.` : msg}</p>
         {attemptMode === 'assessment' && (
           <div style={{ ...progressStyles.card, width: '100%', maxWidth: '640px', textAlign: 'left' }}>
             <div style={progressStyles.cardTitle}>Kết quả theo chủ điểm</div>
@@ -1863,7 +1872,7 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
         <div style={{ display: 'flex', gap: '10px' }}>
           <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại"><Icon name="back" size={16} /></button>
           <button className="qprimary" style={quizStyles.primary} onClick={load}>
-            {preset ? 'Làm lại' : attemptMode === 'assessment' ? nextAssessmentLevel && nextAssessmentLevel !== assessmentLevel ? 'Làm đề khó hơn' : 'Làm đề khác' : 'Bộ câu hỏi mới'}
+            {preset ? 'Làm lại' : attemptMode === 'assessment' ? promotedLevel ? 'Làm bài mức mới' : assessmentRank && nextAssessmentRank && nextAssessmentRank !== assessmentRank ? nextAssessmentRank > assessmentRank ? 'Làm bậc tiếp theo' : 'Luyện lại bậc trước' : nextAssessmentLevel && nextAssessmentLevel !== assessmentLevel ? 'Làm đề khó hơn' : 'Làm đề khác' : 'Bộ câu hỏi mới'}
           </button>
         </div>
       </>,
@@ -1881,9 +1890,9 @@ function QuizSetup({ profile, mistakeCount, onStart }) {
       <div className="assessment-paper">
         <header className="assessment-paper-header">
           <div>
-            <span className="assessment-paper-kicker">BÀI ĐÁNH GIÁ TỔNG QUÁT · {assessmentLevel}</span>
+            <span className="assessment-paper-kicker">BÀI ĐÁNH GIÁ TỔNG QUÁT · {assessmentLevel}{assessmentRank ? ` · BẬC ${assessmentRank}/5` : ''}</span>
             <h1>Kiểm tra tiếng Anh</h1>
-            <p>{questions.length} câu trắc nghiệm · Từ dễ đến khó · Đạt ít nhất 90% để mở mức tiếp theo</p>
+            <p>{questions.length} câu trắc nghiệm · Từ dễ đến khó · Đạt ít nhất 90% để {assessmentRank ? assessmentRank === 5 ? 'lên A2' : 'lên bậc A1 tiếp theo' : 'mở mức tiếp theo'}</p>
           </div>
           <div className="assessment-paper-progress" aria-live="polite">
             <strong>{answeredCount}<span> / {questions.length}</span></strong>
@@ -2278,9 +2287,9 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
   if (phase === 'intro') {
     return wrap(
       <>
-        <h2 style={styles.question}>Luyện điểm yếu của tôi</h2>
-        <div style={practiceStyles.card}>
-          <div style={{ fontSize: fs(14), fontWeight: '700', marginBottom: '8px' }}>{targetFocus ? `Luyện theo kết quả đánh giá: ${targetFocus}` : 'Vì sao AI chọn bài này?'}</div>
+        <h2 style={styles.question}>{targetFocus ? `Luyện ${targetFocus}` : 'Luyện điểm yếu của tôi'}</h2>
+        {!targetFocus && <div style={practiceStyles.card}>
+          <div style={{ fontSize: fs(14), fontWeight: '700', marginBottom: '8px' }}>Vì sao AI chọn bài này?</div>
           {plan.map((s) => (
             <div key={s.id} style={{ marginBottom: '10px' }}>
               <div style={{ fontSize: fs(14), fontWeight: '600' }}>{s.label}</div>
@@ -2290,7 +2299,7 @@ function AdaptiveQuizScreen({ profileId, profile, cefrLevel, count, targetSkill,
           <div style={{ fontSize: fs(12), color: 'var(--text-muted)', lineHeight: 1.5, borderTop: '1px solid var(--border-soft)', paddingTop: '10px' }}>
             Bộ gồm {total} câu. Độ khó thay đổi theo từng câu: bạn trả lời đúng thì câu sau khó hơn, sai thì dễ hơn.
           </div>
-        </div>
+        </div>}
         <div style={{ width: '100%', maxWidth: '520px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button className="qghost icon-only-back" style={quizStyles.ghost} onClick={onExit} title="Quay lại" aria-label="Quay lại">
             <Icon name="back" size={16} />
@@ -3833,6 +3842,7 @@ const structStyles = {
 
 function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialStructureId, onExit, onStartSpeaking, onStartTextChat }) {
   const [selectedId, setSelectedId] = useState(initialStructureId || STRUCTURES[0].id)
+  const [lessonSource, setLessonSource] = useState(null)
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState('library') // library | quiz
   const [quiz, setQuiz] = useState(null)
@@ -3859,9 +3869,16 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
   const focusProgress = (progressData?.topicFocuses || []).find((item) =>
     item.skill === selected.skill && normalizeFocus(item.focus) === selectedFocus
   )
-  const hasFocusEvidence = Boolean(focusProgress && focusProgress.total >= 3)
-  const progressNeedsPractice = hasFocusEvidence && focusProgress.accuracy < 75
-  const progressGood = hasFocusEvidence && focusProgress.accuracy >= 75
+  const assessmentProgress = (progressData?.assessmentFocuses || []).find((item) => item.structureId === selected.id)
+  const progressTotal = (focusProgress?.total || 0) + (assessmentProgress?.total || 0)
+  const progressCorrect = (focusProgress?.correct || 0) + (assessmentProgress?.correct || 0)
+  const hasFocusEvidence = progressTotal >= 3
+  const progressNeedsPractice = hasFocusEvidence && progressCorrect / progressTotal < 0.75
+  const progressGood = hasFocusEvidence && !progressNeedsPractice
+  const progressEvidence = [
+    assessmentProgress?.total ? `Bài kiểm tra tổng quát gần nhất: ${assessmentProgress.correct}/${assessmentProgress.total} câu đúng.` : '',
+    focusProgress?.total ? `Các bài luyện gần đây: ${focusProgress.correct}/${focusProgress.total} câu đúng.` : ''
+  ].filter(Boolean).join(' ')
 
   const startPractice = (list, label) => {
     setQuiz({
@@ -3906,20 +3923,20 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
       <style>{explorerCss}</style>
       <style>{quizCss}</style>
 
-      <aside className="explorer-sidebar" style={{ ...exStyles.side, width: '290px' }}>
+      <aside className="explorer-sidebar" style={{ ...exStyles.side, width: '340px' }}>
         <div className="explorer-sidebar-heading"><span>THƯ VIỆN HỌC TẬP</span><h1>Cấu trúc câu</h1><p>Chọn một mẫu câu để học và luyện tập.</p></div>
         <div style={{ ...exStyles.searchBox, margin: '0 4px 6px' }}>
           <Icon name="search" size={14} />
           <input style={{ ...exStyles.searchInput, width: '100%' }} placeholder="Tìm cấu trúc..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div className="structure-sidebar-scroll" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {groups.length === 0 && (
             <div style={{ fontSize: fs(12), color: 'var(--text-muted)', padding: '8px 10px' }}>Không tìm thấy cấu trúc nào khớp.</div>
           )}
           {groups.map((g) => (
             <div key={g.group}>
-              <div style={exStyles.sectionLabel}>{g.group}</div>
+              <div className="structure-group-heading" style={exStyles.sectionLabel}>{g.group}</div>
               {g.items.map((s) => (
                 <button
                   type="button"
@@ -3950,13 +3967,11 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
               <span className="structure-progress-note-icon" aria-hidden="true">{progressNeedsPractice ? '!' : progressGood ? '✓' : '·'}</span>
               <div className="structure-progress-note-copy">
                 <strong>{progressNeedsPractice ? 'Nên ôn tập chủ điểm này nhiều hơn' : progressGood ? 'Bạn đang làm tốt' : 'Chưa đủ dữ liệu để đánh giá'}</strong>
-                <span>{hasFocusEvidence
-                  ? `${focusProgress.correct}/${focusProgress.total} câu đúng của riêng mẫu “${selected.title}” trong các lượt gần đây. ${progressNeedsPractice ? 'Bạn nên luyện thêm mẫu này.' : 'Kết quả hiện tại đang tốt.'}`
-                  : focusProgress?.total > 0
-                    ? `Đã làm ${focusProgress.total} câu của riêng mẫu “${selected.title}”; cần thêm bài làm để đánh giá đáng tin cậy.`
-                    : `Chưa có kết quả bài tập cho mẫu “${selected.title}”. Hãy luyện mẫu này để bắt đầu theo dõi.`}</span>
+                <span>{progressTotal
+                  ? `${progressEvidence} ${hasFocusEvidence ? progressNeedsPractice ? 'Bạn nên luyện thêm chủ điểm này.' : 'Kết quả hiện tại đang tốt.' : 'Cần thêm câu làm để đánh giá đáng tin cậy.'}`
+                  : `Chưa có kết quả kiểm tra hoặc bài luyện cho mẫu “${selected.title}”. Hãy luyện mẫu này để bắt đầu theo dõi.`}</span>
               </div>
-              {focusProgress?.total > 0 && <span className="structure-progress-note-score">{focusProgress.correct}/{focusProgress.total}</span>}
+              {progressTotal > 0 && <span className="structure-progress-note-score">{progressCorrect}/{progressTotal}</span>}
             </div>
           </div>
 
@@ -3990,6 +4005,27 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
               ))}
             </div>
           </section>
+
+          {structureLessons[selected.id] && (
+            <section className="structure-section structure-lesson">
+              <div style={structStyles.label}>Hiểu sâu hơn</div>
+              <div className="structure-lesson-grid">
+                <div className="structure-lesson-item">
+                  <strong>Cách ghi nhớ</strong>
+                  <p>{structureLessons[selected.id].tip}</p>
+                </div>
+                <div className="structure-lesson-item">
+                  <strong>Lỗi dễ gặp</strong>
+                  <p>{structureLessons[selected.id].mistake}</p>
+                </div>
+              </div>
+              {structureLessons[selected.id].source && (
+                <button className="structure-lesson-source" type="button" onClick={() => setLessonSource(structureLessons[selected.id].source)}>
+                  Đọc bài giảng tham khảo: {structureLessons[selected.id].source.label} ↗
+                </button>
+              )}
+            </section>
+          )}
 
           <section className="structure-practice" style={structStyles.practice}>
             <div>
@@ -4048,22 +4084,50 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
           </section>
         </div>
       </main>
+      {lessonSource && (
+        <div className="structure-reader-backdrop" onClick={() => setLessonSource(null)}>
+          <section className="structure-reader" role="dialog" aria-modal="true" aria-label={`Bài giảng ${lessonSource.label}`} onClick={(event) => event.stopPropagation()}>
+            <div className="structure-reader-header">
+              <strong>{lessonSource.label}</strong>
+              <button type="button" onClick={() => setLessonSource(null)} aria-label="Đóng bài giảng">Đóng ×</button>
+            </div>
+            <webview src={lessonSource.url} partition="lesson-reader" className="structure-reader-webview" />
+          </section>
+        </div>
+      )}
     </div>
   )
 }
 
-function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
-  const [prompt, setPrompt] = useState('Write a short paragraph about a place you enjoy visiting and explain why you like it.')
+function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated, assessment = false, onExit }) {
+  const [prompt, setPrompt] = useState(assessment ? 'Write about a memorable day. Explain what happened, who was involved, and why it mattered to you.' : '')
+  const [promptMode, setPromptMode] = useState('random')
+  const [topic, setTopic] = useState('')
+  const [generatingPrompt, setGeneratingPrompt] = useState(false)
   const [response, setResponse] = useState('')
   const [feedback, setFeedback] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const createPrompt = async () => {
+    setGeneratingPrompt(true)
+    setError('')
+    try {
+      const result = await window.api.generateWritingPrompt({ topic: promptMode === 'topic' ? topic.trim() : '', targetLanguage: profile.targetLanguage, cefrLevel })
+      if (!result?.success) throw new Error(result?.error || 'Chưa tạo được đề bài.')
+      setPrompt(result.prompt)
+      setFeedback(null)
+    } catch (reason) {
+      setError(reason?.message || 'Chưa tạo được đề bài. Hãy thử lại.')
+    } finally {
+      setGeneratingPrompt(false)
+    }
+  }
   const evaluate = async () => {
     setBusy(true)
     setError('')
     setFeedback(null)
     try {
-      const result = await window.api.evaluateWriting({ profileId, prompt, response, targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel })
+      const result = await window.api.evaluateWriting({ profileId, prompt, response, targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel, assessment })
       if (!result?.success) throw new Error(result?.error || 'Không đánh giá được bài viết.')
       setFeedback(result.feedback)
       onEvaluated?.()
@@ -4074,11 +4138,13 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
     }
   }
   const inputStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', padding: 12, font: 'inherit', lineHeight: 1.6, resize: 'vertical' }
-  return <div className="writing-practice-screen"><div className="writing-practice-form">
-    <div><h3 style={{ margin: 0, color: 'var(--text-strong)' }}>Viết một đoạn ngắn</h3><p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>AI chấm theo 4 tiêu chí, chỉ ra câu cần sửa và lưu kết quả vào bản đồ kỹ năng Viết.</p></div>
-    <label style={{ display: 'grid', gap: 6, color: 'var(--text-soft)', fontSize: 13, fontWeight: 600 }}>Đề bài<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={2} style={inputStyle} maxLength={700} /></label>
-    <label style={{ display: 'grid', gap: 6, color: 'var(--text-soft)', fontSize: 13, fontWeight: 600 }}>Bài viết của bạn<textarea value={response} onChange={(event) => setResponse(event.target.value)} rows={9} style={inputStyle} maxLength={5000} placeholder="Viết bằng tiếng Anh ở đây…" /></label>
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{response.trim().length} ký tự · tối thiểu 20</span><button type="button" className="qprimary" style={{ ...quizStyles.primary, padding: '8px 14px', minHeight: 'unset' }} onClick={evaluate} disabled={busy || response.trim().length < 20}>{busy ? 'Đang đánh giá…' : 'Nhận phản hồi theo rubric'}</button></div>
+  return <div className={`writing-practice-screen${assessment ? ' writing-assessment-screen' : ' writing-training-screen'}`}><div className="writing-practice-form">
+    {onExit && <button type="button" className="listening-secondary" onClick={onExit}><Icon name="back" size={15} /> Quay lại Kiểm tra</button>}
+    <header className="writing-practice-header"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG VIẾT' : 'LUYỆN KỸ NĂNG VIẾT'}</span><h3>{assessment ? 'Đánh giá tổng quát kỹ năng viết' : 'Viết một đoạn ngắn'}</h3><p>{assessment ? 'Viết theo đề cố định. Điểm từ 4 tiêu chí sẽ được lưu vào biểu đồ Tiến bộ.' : 'Chọn đề, viết đoạn văn và nhận góp ý theo 4 tiêu chí.'}</p></header>
+    {assessment
+      ? <div className="writing-assessment-prompt"><span>Đề bài</span><p>{prompt}</p></div>
+      : <section className="writing-prompt-setup"><div className="writing-section-heading"><span>01 · CHỌN ĐỀ BÀI</span><h4>Bạn muốn viết về điều gì?</h4></div><div className="writing-prompt-modes"><button type="button" className={promptMode === 'random' ? 'active' : ''} aria-pressed={promptMode === 'random'} disabled={generatingPrompt} onClick={() => { setPromptMode('random'); setPrompt('') }}>Đề ngẫu nhiên</button><button type="button" className={promptMode === 'topic' ? 'active' : ''} aria-pressed={promptMode === 'topic'} disabled={generatingPrompt} onClick={() => { setPromptMode('topic'); setPrompt('') }}>Chọn chủ đề</button></div>{promptMode === 'topic' && <label>Chủ đề bạn muốn viết<input value={topic} onChange={(event) => { setTopic(event.target.value); setPrompt('') }} disabled={generatingPrompt} maxLength={160} placeholder="Ví dụ: chuyến du lịch gần đây" /></label>}<div className="writing-prompt-action"><button type="button" className="listening-primary" disabled={generatingPrompt || (promptMode === 'topic' && !topic.trim())} onClick={createPrompt}>{generatingPrompt ? 'Đang tạo đề…' : prompt ? 'Tạo đề khác' : 'Tạo đề bài'} <Icon name="next" size={15} /></button>{!prompt && <span>AI sẽ tạo một đề phù hợp với trình độ của bạn.</span>}</div>{prompt && <div className="writing-assessment-prompt"><span>ĐỀ BÀI CỦA BẠN</span><p>{prompt}</p></div>}</section>}
+    <section className="writing-answer-section">{!assessment && <div className="writing-section-heading"><span>02 · BÀI VIẾT</span><h4>Viết câu trả lời của bạn</h4></div>}<label>Bài viết của bạn<textarea value={response} onChange={(event) => setResponse(event.target.value)} rows={9} style={inputStyle} maxLength={5000} placeholder="Viết bằng tiếng Anh ở đây…" /></label><div className="writing-answer-footer"><span>{response.trim().length} ký tự · tối thiểu {assessment ? 120 : 20}</span><button type="button" className="qprimary" style={{ ...quizStyles.primary, padding: '8px 14px', minHeight: 'unset' }} onClick={evaluate} disabled={busy || generatingPrompt || feedback || !prompt || response.trim().length < (assessment ? 120 : 20)}>{busy ? 'Đang đánh giá…' : assessment ? 'Nộp bài đánh giá viết' : 'Nhận phản hồi'}</button></div></section>
     {error && <div role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</div>}
     {feedback && <section aria-label="Kết quả đánh giá bài viết" style={{ display: 'grid', gap: 12, border: '1px solid var(--border-soft)', background: 'var(--surface-soft)', borderRadius: 14, padding: 15 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}><div><strong style={{ color: 'var(--text-strong)' }}>Kết quả bài viết</strong><p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 13 }}>{feedback.summary}</p></div><strong style={{ fontSize: 24, color: 'var(--text-strong)' }}>{feedback.overall}<small style={{ fontSize: 12, color: 'var(--text-muted)' }}>/100</small></strong></div>
@@ -4090,7 +4156,49 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated }) {
   </div></div>
 }
 
-function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice }) {
+function SpeakingAssessmentScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
+  const prompts = [
+    'Please introduce yourself and tell me about something you enjoy doing.',
+    'Describe a place you know well. What can people do there, and why do you like it?',
+    'Tell me about a plan or goal you have. What will you do first, and what will you do next?'
+  ]
+  const [index, setIndex] = useState(0)
+  const [answers, setAnswers] = useState(['', '', ''])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [feedback, setFeedback] = useState(null)
+  const speechInput = useSpeechInput((transcript) => {
+    const phrase = cleanRepeatedTranscript(transcript).trim()
+    setAnswers((current) => current.map((value, position) => position === index ? phrase : value))
+  })
+  useEffect(() => () => { speechInput.stop(); cancelNaturalSpeech() }, [speechInput.stop])
+  const submit = async () => {
+    if (answers.some((answer) => !answer.trim()) || busy || speechInput.listening || speechInput.transcribing) return
+    setBusy(true)
+    setError('')
+    try {
+      const turns = prompts.flatMap((prompt, position) => [{ role: 'model', text: prompt }, { role: 'user', text: answers[position] }])
+      const result = await window.api.analyzeVoiceSession({ profileId, turns, targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel, scenarioTitle: 'Đánh giá tổng quát kỹ năng nói', assessment: true })
+      if (!result?.success || !Number.isFinite(result.feedback?.overall)) throw new Error(result?.error || 'Chưa đánh giá được bài nói.')
+      setFeedback(result.feedback)
+    } catch (reason) { setError(reason.message || 'Chưa đánh giá được bài nói. Hãy thử lại.') }
+    finally { setBusy(false) }
+  }
+  return <div className="speaking-assessment">
+    <button type="button" className="listening-secondary" onClick={onExit}><Icon name="back" size={15} /> Quay lại Kiểm tra</button>
+    <div className="listening-intro"><span>ĐÁNH GIÁ KỸ NĂNG NÓI · {cefrLevel}</span><h3>Trả lời bằng giọng nói</h3><p>Trả lời ba câu hỏi qua micro. Điểm tham khảo dựa trên lời được nhận diện, không chấm phát âm hay ngữ điệu.</p></div>
+    {!feedback && <>
+      <div className="speaking-assessment-steps">{prompts.map((_, position) => <button type="button" key={position} className={index === position ? 'active' : ''} disabled={speechInput.listening || speechInput.transcribing} onClick={() => setIndex(position)}>Câu {position + 1}{answers[position] ? ' ✓' : ''}</button>)}</div>
+      <section className="speaking-assessment-question"><span>CÂU {index + 1}/3</span><h4>{prompts[index]}</h4><button type="button" className="listening-secondary" onClick={() => speakNaturalText(prompts[index], 'en-US', undefined, speechVoice)}><Icon name="speaker" size={15} /> Nghe câu hỏi</button><div className="speaking-assessment-response"><button type="button" className="listening-primary" disabled={!speechInput.supported || speechInput.transcribing || busy} onClick={() => { cancelNaturalSpeech(); speechInput.listening ? speechInput.stop() : speechInput.start() }}><Icon name="mic" size={15} /> {speechInput.listening ? 'Dừng ghi âm' : answers[index] ? 'Nói lại' : 'Trả lời bằng micro'}</button><span>{speechInput.listening ? 'Đang nghe…' : speechInput.transcribing ? 'Đang nhận diện…' : answers[index] || 'Chưa có câu trả lời'}</span></div></section>
+      {speechInput.error && <p className="listening-error" role="alert">{speechErrorMessage(speechInput.error)}</p>}
+      {error && <p className="listening-error" role="alert">{error}</p>}
+      <button type="button" className="listening-primary" disabled={answers.some((answer) => !answer.trim()) || busy || speechInput.listening || speechInput.transcribing} onClick={submit}>{busy ? 'Đang đánh giá…' : 'Nộp bài đánh giá nói'}</button>
+    </>}
+    {feedback && <section className="speaking-assessment-result"><h3>Kết quả · {feedback.overall}/100</h3><p>{feedback.summary}</p><div>{[['grammar', 'Ngữ pháp'], ['naturalness', 'Tự nhiên'], ['fluency', 'Trôi chảy qua transcript'], ['interaction', 'Tương tác']].map(([key, label]) => <span key={key}>{label}: <strong>{feedback.scores[key]}/5</strong></span>)}</div><p>{feedback.limits}</p></section>}
+  </div>
+}
+
+function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice, assessment = false, onExit }) {
   const [topic, setTopic] = useState('daily')
   const [lesson, setLesson] = useState(null)
   const [phase, setPhase] = useState('setup')
@@ -4108,7 +4216,7 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice })
   const speedPreviewText = 'Welcome to your listening practice. Take your time, listen carefully, and enjoy learning something new today.'
 
   const refreshRecent = async () => {
-    const result = await window.api.getListeningAttempts({ profileId })
+    const result = assessment ? await window.api.getListeningAssessments({ profileId }) : await window.api.getListeningAttempts({ profileId })
     if (result.success) setRecent(result.attempts || [])
   }
   useEffect(() => { void refreshRecent(); return () => { playbackRequestRef.current++; cancelNaturalSpeech() } }, [profileId])
@@ -4125,7 +4233,9 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice })
     setAnswers({})
     setPlayed({})
     let result
-    try { result = await window.api.generateListeningLesson({ targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel, topic }) } catch { result = { success: false } }
+    try { result = assessment
+      ? await window.api.generateListeningAssessment({ targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel })
+      : await window.api.generateListeningLesson({ targetLanguage: profile.targetLanguage, nativeLanguage: profile.nativeLanguage, cefrLevel, topic }) } catch { result = { success: false } }
     if (!result.success) { setError(result.message || 'Chưa tạo được bài nghe.'); setPhase('setup'); return }
     setLesson({ ...result.lesson, questions: result.lesson.sections.flatMap((section) => section.questions) })
     setPhase('answering')
@@ -4178,7 +4288,7 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice })
     }
   }
   const submit = async () => {
-    if (!lesson || !played[0] || !played[1] || lesson.questions.some((question, index) => answers[index] == null || (typeof answers[index] === 'string' && !answers[index].trim()))) return
+    if (!lesson || lesson.sections.some((_, index) => !played[index]) || lesson.questions.some((question, index) => answers[index] == null || (typeof answers[index] === 'string' && !answers[index].trim()))) return
     cancelNaturalSpeech()
     playbackRequestRef.current++
     setPlaying(null)
@@ -4206,17 +4316,19 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice })
   }
 
   return <div className="listening-practice">
+    {onExit && <button type="button" className="listening-secondary" onClick={onExit} style={{ marginBottom: 18 }}><Icon name="back" size={15} /> Quay lại Kiểm tra</button>}
     {phase === 'setup' ? <>
-      <div className="listening-intro"><span>LUYỆN KỸ NĂNG NGHE</span><h3>Nghe, hiểu và trả lời</h3><p>Hai đoạn hội thoại, mỗi đoạn 5 câu hỏi với các dạng lấy cảm hứng từ IELTS Listening. Hai nhân vật dùng hai giọng AI khác nhau.</p></div>
-      <div className="listening-topic-grid">{topics.map(([id, label]) => <button type="button" key={id} className={topic === id ? 'active' : ''} onClick={() => setTopic(id)}>{label}</button>)}</div>
-      <button type="button" className="listening-primary" onClick={createLesson}>Tạo bài nghe <Icon name="next" size={16} /></button>
+      <div className="listening-intro"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG NGHE' : 'LUYỆN KỸ NĂNG NGHE'}</span><h3>{assessment ? 'Đánh giá nghe tổng quát' : 'Nghe, hiểu và trả lời'}</h3><p>{assessment ? 'Ba đoạn nghe gồm độc thoại, hội thoại và chỉ dẫn; tổng cộng 20 câu hỏi.' : 'Hai đoạn hội thoại, mỗi đoạn 5 câu hỏi.'}</p></div>
+      {!assessment && <div className="listening-topic-grid">{topics.map(([id, label]) => <button type="button" key={id} className={topic === id ? 'active' : ''} onClick={() => setTopic(id)}>{label}</button>)}</div>}
+      {assessment && <p className="listening-hint">Độc thoại 7 câu · Hội thoại 7 câu · Chỉ dẫn 6 câu. Kết quả được lưu riêng để theo dõi tiến bộ nghe.</p>}
+      <button type="button" className="listening-primary" onClick={createLesson}>{assessment ? 'Bắt đầu đánh giá nghe' : 'Tạo bài nghe'} <Icon name="next" size={16} /></button>
       {error && <p className="listening-error" role="alert">{error}</p>}
-      {recent.length > 0 && <div className="listening-recent"><strong>Kết quả gần đây</strong>{recent.map((attempt) => <div key={attempt.id}><span>{attempt.title} <small>· {attempt.level} · {attempt.at?.slice(0, 10)}</small></span><b>{attempt.correct}/{attempt.total}</b></div>)}</div>}
+      {recent.filter((attempt) => (attempt.topic === 'assessment') === assessment).length > 0 && <div className="listening-recent"><strong>{assessment ? 'Kết quả đánh giá nghe' : 'Kết quả luyện nghe gần đây'}</strong>{recent.filter((attempt) => (attempt.topic === 'assessment') === assessment).slice(0, 5).map((attempt) => <div key={attempt.id}><span>{attempt.title} <small>· {attempt.level} · {attempt.at?.slice(0, 10)}</small></span><b>{attempt.correct}/{attempt.total}</b></div>)}</div>}
     </> : phase === 'loading' ? <div className="listening-loading" role="status">Đang tạo bài nghe, vui lòng chờ một chút…</div> : <>
-      <div className="listening-lesson-head"><span>BÀI NGHE · {lesson.level}</span><h3>{lesson.title}</h3><p>2 đoạn hội thoại · 10 câu hỏi · nghe từng đoạn trước khi trả lời.</p></div>
-      {phase === 'answering' && <p className="listening-hint">Nghe cả hai đoạn ít nhất một lần rồi trả lời đủ 10 câu. Với câu điền từ, viết đúng từ hoặc số nghe được.</p>}
+      <div className="listening-lesson-head"><span>{lesson.topic === 'assessment' ? 'ĐÁNH GIÁ NGHE' : 'BÀI NGHE'} · {lesson.level}</span><h3>{lesson.title}</h3><p>{lesson.sections.length} đoạn nghe · {lesson.questions.length} câu hỏi · nghe từng đoạn trước khi trả lời.</p></div>
+      {phase === 'answering' && <p className="listening-hint">Nghe mỗi đoạn ít nhất một lần rồi trả lời đủ {lesson.questions.length} câu. Với câu điền từ, viết đúng từ hoặc số nghe được.</p>}
       {lesson.sections.map((section, sectionIndex) => <section className="listening-section" key={sectionIndex}>
-        <div className="listening-section-heading"><span>ĐOẠN {sectionIndex + 1} · CÂU {sectionIndex * 5 + 1}–{sectionIndex * 5 + 5}</span><h4>{section.title}</h4></div>
+        <div className="listening-section-heading"><span>ĐOẠN {sectionIndex + 1}{section.label ? ` · ${section.label.toUpperCase()}` : ''} · CÂU {lesson.sections.slice(0, sectionIndex).reduce((sum, item) => sum + item.questions.length, 0) + 1}–{lesson.sections.slice(0, sectionIndex + 1).reduce((sum, item) => sum + item.questions.length, 0)}</span><h4>{section.title}</h4></div>
         <div className="listening-player">
           <div className="listening-player-mark"><Icon name="speaker" size={22} /></div>
           <div><strong>Bài nghe</strong><small>{preparing === sectionIndex ? previewing ? 'Đang chuẩn bị mẫu nghe thử…' : 'Đang chuẩn bị audio…' : playing === sectionIndex ? previewing ? 'Đang nghe thử tốc độ…' : 'Đang phát…' : played[sectionIndex] ? 'Sẵn sàng nghe lại' : 'Chưa phát'}</small></div>
@@ -4227,10 +4339,10 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice })
           </div></details>
           {(playing === sectionIndex || preparing === sectionIndex) && <button type="button" className="listening-secondary" onClick={() => { playbackRequestRef.current++; cancelNaturalSpeech(); setPreparing(null); setPlaying(null); setPreviewing(false) }} aria-label="Dừng phát"><Icon name="stop" size={15} /></button>}
         </div>
-        <div className="listening-questions">{section.questions.map((question, index) => renderQuestion(question, sectionIndex * 5 + index))}</div>
+        <div className="listening-questions">{section.questions.map((question, index) => renderQuestion(question, lesson.sections.slice(0, sectionIndex).reduce((sum, item) => sum + item.questions.length, 0) + index))}</div>
         {phase === 'result' && <details className="listening-transcript"><summary>Xem bản chép lời đoạn {sectionIndex + 1}</summary>{section.turns.map((turn, index) => <p key={index}><strong>{turn.speaker}:</strong> {turn.text}</p>)}</details>}
       </section>)}
-      {phase === 'answering' ? <button type="button" className="listening-primary" disabled={!played[0] || !played[1] || answeredCount !== lesson.questions.length} onClick={submit}>Nộp bài · {answeredCount}/{lesson.questions.length}</button> : <><div className="listening-result"><strong>{score}/{lesson.questions.length} câu đúng</strong><span>{Math.round(score / lesson.questions.length * 100)}%</span></div><button type="button" className="listening-primary" onClick={() => { setLesson(null); setPhase('setup'); setError('') }}>Làm bài nghe khác <Icon name="next" size={16} /></button></>}
+      {phase === 'answering' ? <button type="button" className="listening-primary" disabled={lesson.sections.some((_, index) => !played[index]) || answeredCount !== lesson.questions.length} onClick={submit}>Nộp bài · {answeredCount}/{lesson.questions.length}</button> : <><div className="listening-result"><strong>{score}/{lesson.questions.length} câu đúng</strong><span>{Math.round(score / lesson.questions.length * 100)}%</span></div><button type="button" className="listening-primary" onClick={() => { setLesson(null); setPhase('setup'); setError('') }}>{lesson.topic === 'assessment' ? 'Làm đề đánh giá khác' : 'Làm bài nghe khác'} <Icon name="next" size={16} /></button></>}
       {error && <p className="listening-error" role="alert">{error}</p>}
     </>}
   </div>
@@ -4253,52 +4365,80 @@ function ReviewHub({ profileId, profile, cefrLevel, speechVoice, dueCount, mista
   useEffect(() => { refreshProgress() }, [profileId])
 
   const modeItems = [
-    { id: 'mistakes', group: 'ÔN TẬP', icon: 'repeat', title: 'Ôn lỗi cũ', desc: `${dueCount} lỗi đến hạn`, badge: dueCount },
     { id: 'setup', group: 'ÔN TẬP', icon: 'check', title: 'Bài trắc nghiệm', desc: 'Luyện theo điểm yếu hoặc chủ đề' },
-    { id: 'history', group: 'ÔN TẬP', icon: 'book', title: 'Bài đã làm', desc: 'Xem lại đáp án và giải thích' },
+    { id: 'mistakes', group: 'ÔN TẬP', icon: 'repeat', title: 'Ôn lỗi cũ', desc: `${dueCount} lỗi đến hạn`, badge: dueCount },
     { id: 'listening', group: 'KỸ NĂNG', icon: 'speaker', title: 'Luyện nghe', desc: 'Nghe hội thoại và trả lời câu hỏi' },
+    { id: 'writing', group: 'KỸ NĂNG', icon: 'edit', title: 'Phân tích bài viết', desc: 'Nhận xét và lưu tiến bộ viết' },
     { id: 'cloze', group: 'TRÒ CHƠI', icon: 'edit', title: 'Điền từ vào câu', desc: 'Ôn từ vựng qua ngữ cảnh' },
     { id: 'spot', group: 'TRÒ CHƠI', icon: 'warning', title: 'Tìm câu sai', desc: 'Nhận diện và sửa lỗi' },
     { id: 'match', group: 'TRÒ CHƠI', icon: 'clock', title: 'Ghép từ 60 giây', desc: 'Ghép từ với nghĩa' },
-    { id: 'writing', group: 'KỸ NĂNG', icon: 'edit', title: 'Phân tích bài viết', desc: 'Nhận xét theo rubric và lưu tiến bộ' }
+    { id: 'history', group: 'LỊCH SỬ', icon: 'book', title: 'Bài đã làm', desc: 'Xem lại đáp án và giải thích' }
   ]
 
   const focusRecommendations = (progressData?.exerciseFocuses || [])
     .filter((item) => item.needsPractice || (item.total >= 3 && item.accuracy < 75) || item.chatErrors >= 2)
     .map((item) => ({
+      key: structureIdForAssessmentFocus(item.focus) || `${item.skill}:${normalizeFocusName(item.focus)}`,
       skill: item.skill,
       focus: item.focus,
       skillLabel: item.skillLabel,
-      score: item.accuracy,
-      evidence: item.total ? `${item.correct}/${item.total} câu đúng` : `${item.chatErrors} lỗi trong hội thoại`,
+      score: item.total >= 3 ? item.accuracy : null,
+      evidence: [
+        item.total ? { source: 'practice', label: 'Bài luyện', detail: `${item.correct}/${item.total} câu đúng` } : null,
+        item.chatErrors ? { source: 'chat', label: 'Hội thoại', detail: `${item.chatErrors} lỗi được ghi nhận` } : null
+      ].filter(Boolean),
       priority: item.needsPractice ? 3 : item.accuracy !== null ? 2 : 1
     }))
-  const assessmentRecommendations = (progressData?.assessments?.[0]?.signals || [])
-    .filter((item) => item.status === 'practice')
-    .map((item) => ({
-      skill: item.skill,
-      focus: item.focus || item.label,
-      skillLabel: item.label,
-      score: Math.round((item.correct / Math.max(item.total, 1)) * 100),
-      evidence: `Bài đánh giá gần nhất · ${item.correct}/${item.total} câu đúng`,
-      priority: 2
-    }))
+  const assessmentRecommendations = (progressData?.assessmentFocuses || [])
+    .filter((item) => item.correct < item.total)
+    .map((item) => {
+      const structure = STRUCTURES.find((entry) => entry.id === item.structureId)
+      return {
+        key: item.structureId || `${item.skill}:${normalizeFocusName(item.focus)}`,
+        skill: structure?.skill || item.skill,
+        focus: structure?.title || item.focus,
+        skillLabel: item.skillLabel || 'Bài đánh giá',
+        score: item.total >= 3 ? item.accuracy : null,
+        evidence: [{ source: 'assessment', label: 'Kiểm tra tổng quát', detail: `${item.correct}/${item.total} câu đúng` }],
+        priority: item.total >= 2 ? 3 : 2
+      }
+    })
   const skillRecommendations = (progressData?.skills || [])
     .filter((item) => item.mastery !== null && item.mastery < 65)
     .map((item) => ({
+      key: `skill:${item.id}`,
       skill: item.id,
       focus: item.label,
       skillLabel: item.label,
       score: item.mastery,
-      evidence: `Tiến bộ ${item.mastery}/100 · ${item.correct}/${item.total} câu đúng`,
+      evidence: [{ source: 'skill', label: 'Tiến bộ chung', detail: `${item.correct}/${item.total} câu đúng gần đây` }],
       priority: 1
     }))
   const dueRecommendations = (progressData?.dueFocusReviews || []).map((item) => ({
-    skill: item.skill, focus: item.focus, skillLabel: item.skillLabel, score: item.accuracy,
-    evidence: `Đến lịch kiểm tra ghi nhớ · ${item.interval_days} ngày · ${item.correct}/${item.attempts} lượt đúng`, priority: 4
+    key: structureIdForAssessmentFocus(item.focus) || `${item.skill}:${normalizeFocusName(item.focus)}`,
+    skill: item.skill, focus: item.focus, skillLabel: item.skillLabel, score: item.attempts >= 3 ? item.accuracy : null,
+    evidence: [{ source: 'review', label: 'Đến lịch ôn', detail: `Chu kỳ ${item.interval_days} ngày · ${item.correct}/${item.attempts} lượt đúng` }], priority: 4
   }))
-  const recommendations = [...dueRecommendations, ...focusRecommendations, ...assessmentRecommendations, ...skillRecommendations]
-    .filter((item, index, all) => all.findIndex((candidate) => candidate.skill === item.skill && candidate.focus.toLowerCase() === item.focus.toLowerCase()) === index)
+  const recommendationMap = new Map()
+  for (const item of [...dueRecommendations, ...focusRecommendations, ...assessmentRecommendations, ...skillRecommendations]) {
+    const previous = recommendationMap.get(item.key)
+    if (!previous) recommendationMap.set(item.key, { ...item })
+    else {
+      for (const source of item.evidence) {
+        if (!previous.evidence.some((entry) => entry.source === source.source)) previous.evidence.push(source)
+      }
+      previous.priority = Math.max(previous.priority, item.priority)
+      if (previous.score === null) previous.score = item.score
+    }
+  }
+  for (const item of recommendationMap.values()) {
+    const structure = STRUCTURES.find((entry) => entry.id === item.key)
+    if (structure) {
+      item.skill = structure.skill
+      item.skillLabel = structure.group
+    }
+  }
+  const recommendations = [...recommendationMap.values()]
     .sort((a, b) => b.priority - a.priority || (a.score ?? 101) - (b.score ?? 101))
     .slice(0, 8)
 
@@ -4322,7 +4462,7 @@ function ReviewHub({ profileId, profile, cefrLevel, speechVoice, dueCount, mista
       label: `Luyện ${recommendation.focus}`,
       count: 5,
       targetSkill: recommendation.skill,
-      targetFocus: recommendation.focus
+      targetFocus: recommendation.key.startsWith('skill:') ? null : recommendation.focus
     })
     setMode('quiz')
   }
@@ -4333,7 +4473,7 @@ function ReviewHub({ profileId, profile, cefrLevel, speechVoice, dueCount, mista
     <main className="review-workspace">
       <aside className="review-workspace-sidebar" aria-label="Các cách ôn tập">
         <div className="review-workspace-brand"><span>HỌC TẬP CÙNG AI</span><h1>Ôn tập</h1><p>Chọn một hoạt động để bắt đầu.</p></div>
-        {['ÔN TẬP', 'TRÒ CHƠI', 'KỸ NĂNG'].map((group) => <div className="review-mode-group" key={group}>
+        {['ÔN TẬP', 'KỸ NĂNG', 'TRÒ CHƠI', 'LỊCH SỬ'].map((group) => <div className="review-mode-group" key={group}>
           <span className="review-mode-group-label">{group}</span>
           {modeItems.filter((item) => item.group === group).map((item) => <button
             key={item.id}
@@ -4361,10 +4501,15 @@ function ReviewHub({ profileId, profile, cefrLevel, speechVoice, dueCount, mista
         <div className="review-progress-heading"><span className="review-progress-icon"><Icon name="trend" size={17} /></span><div><span>THEO DÕI TIẾN BỘ</span><h2>Nên ôn phần nào?</h2></div></div>
         <p className="review-progress-intro">Các chủ điểm cần củng cố từ bài đánh giá, bài tập và lỗi hội thoại sẽ được gom tại đây.</p>
         {progressLoading ? <div className="review-progress-empty">Đang tải dữ liệu học tập…</div> : recommendations.length > 0 ? <div className="review-recommendation-list">
-          {recommendations.map((item, index) => <article className="review-recommendation" key={`${item.skill}-${item.focus}`}>
-            <div className="review-recommendation-top"><span>{index === 0 ? 'ƯU TIÊN' : item.skillLabel}</span>{item.score !== null && <strong>{item.score}/100</strong>}</div>
-            <h3>{item.focus}</h3>
-            <p>{item.evidence}</p>
+          {recommendations.map((item, index) => <article className="review-recommendation" key={item.key}>
+            <details className="review-recommendation-details">
+              <summary>
+                <span className="review-recommendation-top"><span>{index === 0 ? 'ƯU TIÊN' : item.skillLabel}</span>{item.score !== null && <strong>{item.score}/100</strong>}</span>
+                <span className="review-recommendation-title">{item.focus}</span>
+                <span className="review-recommendation-toggle">Chi tiết</span>
+              </summary>
+              <ul className="review-recommendation-evidence">{item.evidence.map((source) => <li key={source.source}><strong>{source.label}</strong><span>{source.detail}</span></li>)}</ul>
+            </details>
             <button type="button" onClick={() => startRecommendation(item)}>{item.skill === 'writing' ? 'Mở luyện viết' : item.skill === 'speaking' ? 'Mở luyện nói' : 'Luyện chủ điểm này'} <Icon name="next" size={14} /></button>
           </article>)}
         </div> : <div className="review-progress-empty">
@@ -4731,7 +4876,8 @@ function SkillMap({ skills, focuses = [] }) {
   )
 }
 
-function AssessmentProgressChart({ attempts }) {
+function AssessmentProgressChart({ attempts, listening = false, title = null, description = null }) {
+  const showGoal = !listening && !title
   const points = attempts.filter((attempt) => attempt.total > 0).map((attempt, index, list) => ({
     ...attempt,
     percent: Math.round(attempt.correct / attempt.total * 100),
@@ -4739,12 +4885,12 @@ function AssessmentProgressChart({ attempts }) {
   }))
   const y = (percent) => 205 - percent * 1.55
   return <div className="assessment-trend">
-    <div className="assessment-trend-heading"><strong>Tiến bộ qua các bài đánh giá</strong><span>{points.length} lần gần nhất</span></div>
-    <div className="assessment-trend-legend"><span><i className="assessment-trend-legend-score" />Điểm bài làm</span><span><i className="assessment-trend-legend-target" />Mốc 90% để đạt</span></div>
+    <div className="assessment-trend-heading"><strong>{title || (listening ? 'Tiến bộ qua các bài đánh giá nghe' : 'Tiến bộ qua các bài đánh giá')}</strong><span>{points.length} lần gần nhất</span></div>
+    <div className="assessment-trend-legend"><span><i className="assessment-trend-legend-score" />Điểm bài làm</span>{showGoal && <span><i className="assessment-trend-legend-target" />Mốc 90% để đạt</span>}</div>
     <div className="assessment-trend-plot">
-      <svg viewBox="0 0 800 280" role="img" aria-label={`Biểu đồ điểm đánh giá tổng quát: ${points.map((point, index) => `lần ${index + 1}, ${point.at?.slice(0, 10) || 'không rõ ngày'}, ${point.level || 'không rõ mức'}, ${point.percent}%`).join('; ')}`}>
-        {[0, 25, 50, 75, 90, 100].map((tick) => <g key={tick}>
-          <line className={tick === 90 ? 'assessment-trend-goal' : 'assessment-trend-grid'} x1="70" x2="730" y1={y(tick)} y2={y(tick)} />
+      <svg viewBox="0 0 800 280" role="img" aria-label={`Biểu đồ điểm ${title || (listening ? 'đánh giá nghe' : 'đánh giá tổng quát')}: ${points.map((point, index) => `lần ${index + 1}, ${point.at?.slice(0, 10) || 'không rõ ngày'}, ${point.level || 'không rõ mức'}, ${point.percent}%`).join('; ')}`}>
+        {(showGoal ? [0, 25, 50, 75, 90, 100] : [0, 25, 50, 75, 100]).map((tick) => <g key={tick}>
+          <line className={showGoal && tick === 90 ? 'assessment-trend-goal' : 'assessment-trend-grid'} x1="70" x2="730" y1={y(tick)} y2={y(tick)} />
           <text className="assessment-trend-axis" x="47" y={y(tick) + 4} textAnchor="end">{tick}%</text>
         </g>)}
         {points.slice(1).map((point, index) => <line key={point.id} className={point.level && points[index].level && points[index].level !== point.level ? 'assessment-trend-line assessment-trend-transition' : 'assessment-trend-line'} x1={points[index].x} y1={y(points[index].percent)} x2={point.x} y2={y(point.percent)} />)}
@@ -4757,23 +4903,53 @@ function AssessmentProgressChart({ attempts }) {
         </g>)}
       </svg>
     </div>
-    <p>Mỗi điểm là một bài đánh giá. Nét đứt báo hiệu chuyển mức đề; hãy so sánh điểm trong cùng mức.</p>
+    <p>{description || (listening ? 'Mỗi điểm là một bài nghe 20 câu. Hãy so sánh điểm trong cùng mức đề.' : 'Mỗi điểm là một bài đánh giá. Nét đứt báo hiệu chuyển mức đề; hãy so sánh điểm trong cùng mức.')}</p>
   </div>
 }
 
-function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenStructures }) {
+function AssessmentHub({ profileId, onExit, onStartKnowledge, onStartListening, onStartSpeaking, onStartWriting }) {
+  const [knowledge, setKnowledge] = useState(null)
+  const [listening, setListening] = useState(null)
+  const [speaking, setSpeaking] = useState(null)
+  const [writing, setWriting] = useState(null)
+  useEffect(() => {
+    window.api.getProgress({ profileId }).then((result) => { if (result.success) setKnowledge(result.assessments?.[0] || null) })
+    window.api.getListeningAssessments({ profileId }).then((result) => { if (result.success) setListening(result.attempts[0] || null) })
+    window.api.getSkillAssessments({ profileId }).then((result) => { if (result.success) { setSpeaking(result.speaking[0] || null); setWriting(result.writing[0] || null) } })
+  }, [profileId])
+  return <div className="assessment-hub fade-in">
+    <header className="progress-header"><div><span className="progress-eyebrow">HỌC TẬP CÙNG AI / KIỂM TRA</span><h1>Kiểm tra tổng quát</h1><p>Chọn phần muốn đánh giá. Kết quả của hai bài được theo dõi riêng trong mục Tiến bộ.</p></div><button type="button" className="progress-back" onClick={onExit} aria-label="Quay lại"><Icon name="back" size={16} /></button></header>
+    <div className="assessment-hub-grid">
+      <article className="assessment-hub-card"><span>01 · KIẾN THỨC NGÔN NGỮ</span><h2>Ngữ pháp, từ vựng và đọc hiểu</h2><p>40 câu từ dễ đến khó. Kết quả giúp theo dõi mức độ nắm vững cấu trúc và từ vựng.</p><div className="assessment-hub-card-footer"><small>{knowledge ? `Lần gần nhất: ${knowledge.correct}/${knowledge.total} · ${Math.round(knowledge.correct / knowledge.total * 100)}%` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={() => onStartKnowledge(knowledge)}>Làm bài đánh giá <Icon name="next" size={15} /></button></div></article>
+      <article className="assessment-hub-card"><span>02 · KỸ NĂNG NGHE</span><h2>Nghe hiểu</h2><p>20 câu qua ba đoạn: độc thoại, hội thoại và chỉ dẫn. Nghe từng đoạn rồi trả lời.</p><div className="assessment-hub-card-footer"><small>{listening ? `Lần gần nhất: ${listening.correct}/${listening.total} · ${Math.round(listening.correct / listening.total * 100)}%` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartListening}>Làm bài đánh giá nghe <Icon name="next" size={15} /></button></div></article>
+      <article className="assessment-hub-card"><span>03 · KỸ NĂNG NÓI</span><h2>Nói theo câu hỏi</h2><p>Trả lời ba câu hỏi qua micro. Kết quả đánh giá cách diễn đạt từ transcript nhận diện được.</p><div className="assessment-hub-card-footer"><small>{speaking ? `Lần gần nhất: ${speaking.overall}/100` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartSpeaking}>Làm bài đánh giá nói <Icon name="next" size={15} /></button></div></article>
+      <article className="assessment-hub-card"><span>04 · KỸ NĂNG VIẾT</span><h2>Viết theo đề</h2><p>Viết một đoạn theo đề cố định. AI chấm hoàn thành đề, ngữ pháp, từ vựng và mạch lạc.</p><div className="assessment-hub-card-footer"><small>{writing ? `Lần gần nhất: ${writing.overall}/100` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartWriting}>Làm bài đánh giá viết <Icon name="next" size={15} /></button></div></article>
+    </div>
+  </div>
+}
+
+function ProgressScreen({ profileId, profile, onExit, onOpenStructures }) {
   const [data, setData] = useState(null)
+  const [listeningAssessments, setListeningAssessments] = useState([])
+  const [skillAssessments, setSkillAssessments] = useState({ speaking: [], writing: [] })
   const [loading, setLoading] = useState(true)
   const [insight, setInsight] = useState('')
   const [insightBusy, setInsightBusy] = useState(false)
   const [insightErr, setInsightErr] = useState('')
   const [showAssessmentHistory, setShowAssessmentHistory] = useState(false)
+  const [assessmentSlide, setAssessmentSlide] = useState(0)
+  const assessmentTouchStartRef = useRef(null)
+  const slideAssessment = (next) => {
+    setAssessmentSlide(Math.max(0, Math.min(3, next)))
+  }
 
   useEffect(() => {
-    window.api.getProgress({ profileId }).then((res) => {
+    Promise.all([window.api.getProgress({ profileId }), window.api.getListeningAssessments({ profileId }), window.api.getSkillAssessments({ profileId })]).then(([res, listening, skills]) => {
       setData(res.success ? res : null)
+      setListeningAssessments(listening.success ? listening.attempts : [])
+      if (skills.success) setSkillAssessments({ speaking: skills.speaking, writing: skills.writing })
       setLoading(false)
-    })
+    }).catch(() => setLoading(false))
   }, [])
 
   const askInsight = async () => {
@@ -4795,7 +4971,7 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
 
   if (loading) return wrap(<div className="progress-empty"><span>ĐANG CẬP NHẬT</span><h2>Đang tính số liệu học tập…</h2></div>)
 
-  if (!data || (data.totals.messages === 0 && !(data.exerciseFocuses || []).length && !(data.assessments || []).length)) {
+  if (!data || (data.totals.messages === 0 && !(data.exerciseFocuses || []).length && !(data.assessments || []).length && !listeningAssessments.length && !skillAssessments.speaking.length && !skillAssessments.writing.length)) {
     return wrap(
       <>
         <header className="progress-header">
@@ -4805,9 +4981,8 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
         <div className="progress-empty">
           <span>CHƯA CÓ DỮ LIỆU</span>
           <h2>Bắt đầu từ một bài đánh giá</h2>
-          <p>Chưa có dữ liệu học tập. Bạn có thể làm bài đánh giá tổng quát để bắt đầu theo dõi.</p>
-          <button type="button" className="progress-action" onClick={() => onStartAssessment(null)}>Làm bài đánh giá tổng quát <Icon name="next" size={16} /></button>
-          <small>40 câu ngữ pháp, từ vựng và đọc hiểu. Điểm là thang tham khảo nội bộ, không phải chứng chỉ CEFR.</small>
+          <p>Chưa có dữ liệu học tập. Vào mục Kiểm tra để làm bài đánh giá và bắt đầu theo dõi tiến bộ.</p>
+          <small>Bài đánh giá là thang tham khảo nội bộ, không phải chứng chỉ CEFR.</small>
         </div>
       </>
     )
@@ -4845,15 +5020,24 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
         </div>
       </div>
 
-      <div className="progress-card progress-card-assessment" style={{ ...progressStyles.card, padding: '18px' }}>
+      <div className="progress-overview-grid">
+      <section className="progress-assessment-carousel" aria-label="Kết quả các bài đánh giá">
+        <div className="progress-assessment-toolbar">
+          <div><strong>Các bài đánh giá</strong><span>Vuốt ngang hoặc dùng nút để xem từng kỹ năng</span></div>
+          <div className="progress-assessment-controls">
+            <button type="button" aria-label="Bài đánh giá trước" disabled={assessmentSlide === 0} onClick={() => slideAssessment(assessmentSlide - 1)}><Icon name="back" size={16} /></button>
+            <span>{assessmentSlide + 1}/4</span>
+            <button type="button" aria-label="Bài đánh giá tiếp theo" disabled={assessmentSlide === 3} onClick={() => slideAssessment(assessmentSlide + 1)}><Icon name="next" size={16} /></button>
+          </div>
+        </div>
+      <div className="progress-assessment-viewport" tabIndex={0} aria-label={`Bài đánh giá ${assessmentSlide + 1} trên 4`} onKeyDown={(event) => { if (event.key === 'ArrowRight') { event.preventDefault(); slideAssessment(assessmentSlide + 1) } else if (event.key === 'ArrowLeft') { event.preventDefault(); slideAssessment(assessmentSlide - 1) } }} onTouchStart={(event) => { assessmentTouchStartRef.current = event.touches[0]?.clientX ?? null }} onTouchEnd={(event) => { const start = assessmentTouchStartRef.current; const end = event.changedTouches[0]?.clientX; assessmentTouchStartRef.current = null; if (start != null && end != null && Math.abs(end - start) > 50) slideAssessment(assessmentSlide + (end < start ? 1 : -1)) }}>
+      <div className="progress-assessment-track" style={{ transform: `translateX(-${assessmentSlide * 100}%)` }}>
+      <div className={`progress-card progress-card-assessment${assessmentSlide === 0 ? ' is-active' : ''}`} aria-hidden={assessmentSlide !== 0} style={{ ...progressStyles.card, padding: '18px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
           <div>
-            <div style={progressStyles.cardTitle}>Bài đánh giá tổng quát</div>
+            <div style={progressStyles.cardTitle}>Đánh giá ngữ pháp, từ vựng và đọc hiểu</div>
             <div style={progressStyles.cardSub}>40 câu · ngữ pháp, từ vựng và đọc hiểu · dễ đến khó</div>
           </div>
-          <button className="qprimary" style={{ ...quizStyles.primary, whiteSpace: 'nowrap', padding: '8px 13px', fontSize: fs(12), minHeight: 'unset' }} onClick={() => onStartAssessment(assessments[0] || null)}>
-            {assessments.length ? (data.assessmentDue ? 'Đánh giá lại · đến hạn' : 'Làm lại bài đánh giá') : 'Bắt đầu đánh giá'}
-          </button>
         </div>
 
         {assessments.length > 0 && <div style={{ color: data.assessmentDue ? 'var(--accent)' : 'var(--text-muted)', fontSize: fs(12), marginTop: '8px' }}>
@@ -4937,19 +5121,44 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
             </div>}
           </>
         })()}
-        <div style={{ color: 'var(--text-muted)', fontSize: fs(11), marginTop: '12px' }}>Thang tham khảo nội bộ · không phải chứng chỉ CEFR · chưa đánh giá nghe/nói</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: fs(11), marginTop: '12px' }}>Bài 40 câu chỉ đánh giá ngữ pháp, từ vựng và đọc hiểu; điểm là thang tham khảo nội bộ.</div>
       </div>
-     
 
-      
+      <div className={`progress-card progress-card-assessment${assessmentSlide === 1 ? ' is-active' : ''}`} aria-hidden={assessmentSlide !== 1} style={{ ...progressStyles.card, padding: '18px' }}>
+        <div style={progressStyles.cardTitle}>Đánh giá kỹ năng nghe</div>
+        <div style={progressStyles.cardSub}>20 câu · độc thoại, hội thoại và chỉ dẫn</div>
+        {listeningAssessments.length ? <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '12px 14px', borderRadius: 12, background: 'var(--surface-soft)' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>LẦN GẦN NHẤT · {listeningAssessments[0].at?.slice(0, 10)}</span>
+            <strong style={{ color: scoreColor(listeningAssessments[0].correct, listeningAssessments[0].total) }}>{listeningAssessments[0].correct}/{listeningAssessments[0].total} · {Math.round(listeningAssessments[0].correct / listeningAssessments[0].total * 100)}%</strong>
+          </div>
+          <AssessmentProgressChart attempts={[...listeningAssessments].reverse().slice(-8)} listening />
+        </> : <p style={{ ...progressStyles.cardSub, marginTop: 12 }}>Chưa có kết quả. Vào mục Kiểm tra để làm bài đánh giá nghe đầu tiên.</p>}
+      </div>
+
+      {[['speaking', 'nói', 'Điểm dựa trên transcript micro nhận diện; không đo phát âm hay ngữ điệu.'], ['writing', 'viết', 'Điểm từ rubric hoàn thành đề, ngữ pháp, từ vựng và mạch lạc.']].map(([key, label, note], offset) => {
+        const attempts = skillAssessments[key]
+        return <div className={`progress-card progress-card-assessment${assessmentSlide === offset + 2 ? ' is-active' : ''}`} aria-hidden={assessmentSlide !== offset + 2} style={{ ...progressStyles.card, padding: '18px' }} key={key}>
+          <div style={progressStyles.cardTitle}>Đánh giá kỹ năng {label}</div>
+          <div style={progressStyles.cardSub}>{note}</div>
+          {attempts.length ? <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '12px 14px', borderRadius: 12, background: 'var(--surface-soft)' }}><span style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>LẦN GẦN NHẤT · {attempts[0].at?.slice(0, 10)}</span><strong>{attempts[0].overall}/100</strong></div>
+            <AssessmentProgressChart attempts={[...attempts].reverse().map((attempt) => ({ ...attempt, correct: attempt.overall, total: 100 }))} title={`Tiến bộ qua các bài đánh giá ${label}`} description={`Mỗi điểm là một bài đánh giá ${label}; hãy so sánh kết quả trong cùng mức đề. ${note}`} />
+          </> : <p style={{ ...progressStyles.cardSub, marginTop: 12 }}>Chưa có kết quả. Vào mục Kiểm tra để làm bài đánh giá {label} đầu tiên.</p>}
+        </div>
+      })}
+
+      </div>
+      </div>
+      </section>
       <div className="progress-card progress-card-skills" style={progressStyles.card}>
         <div style={progressStyles.cardTitle}>Bản đồ kỹ năng</div>
-        <div style={progressStyles.cardSub}>
-          Điểm kỹ năng viết dựa trên rubric bài viết; kỹ năng nói dựa trên đánh giá transcript của phiên hội thoại. Các điểm nói là tham khảo ngôn ngữ, không đo âm thanh hay phát âm. Những kỹ năng khác dựa trên kết quả bài tập và ôn lỗi (tối đa 20 lượt); lỗi nhận diện trong chat là tín hiệu riêng, không tự tính thành câu sai.
-        </div>
+        <div style={progressStyles.cardSub}>Điểm từ bài tập, bài viết, phiên nói và lỗi đã ghi nhận. Điểm nói dựa trên transcript, chưa đo phát âm hay ngữ điệu.</div>
         <SkillMap skills={data.skills || []} focuses={data.exerciseFocuses || []} />
       </div>
+      </div>
 
+      
       <div className="progress-card" style={progressStyles.card}>
         <div style={progressStyles.cardTitle}>Hiệu quả cách luyện thích ứng</div>
         <div style={progressStyles.cardSub}>Mỗi chủ điểm luân phiên cân bằng giữa ôn gợi nhớ, câu đối chiếu và ví dụ có hướng dẫn. Tỷ lệ được so sánh riêng theo kỹ năng.</div>
@@ -5028,140 +5237,28 @@ function ProgressScreen({ profileId, profile, onExit, onStartAssessment, onOpenS
   )
 }
 
-function ProgressPanel({ profileId, profile, refreshKey, onOpenFull }) {
+function ProgressPanel({ profileId, refreshKey, onOpenFull }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [insight, setInsight] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-
   useEffect(() => {
     let cancelled = false
-    window.api.getProgress({ profileId }).then((res) => {
+    setLoading(true)
+    window.api.getProgress({ profileId }).then((result) => {
       if (cancelled) return
-      setData(res.success ? res : null)
+      setData(result.success ? result : null)
       setLoading(false)
-    })
-    return () => {
-      cancelled = true
-    }
+    }).catch(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [profileId, refreshKey])
-
-  const askInsight = async () => {
-    setBusy(true)
-    setErr('')
-    const res = await window.api.getProgressInsight({ profileId, nativeLanguage: profile.nativeLanguage })
-    setBusy(false)
-    if (res.success) setInsight(res.text)
-    else setErr('Chưa tạo được nhận xét (AI có thể đang bận).')
-  }
-
-  if (loading) return <div style={{ fontSize: fs(13), color: 'var(--text-muted)' }}>Đang tính số liệu...</div>
-
-  if (!data || data.totals.messages === 0) {
-    return (
-      <div style={{ ...styles.statCard, fontSize: fs(13), color: 'var(--text-muted)' }}>
-        Chưa có đủ dữ liệu. Hãy trò chuyện vài ngày, số liệu tiến bộ sẽ xuất hiện ở đây.
-      </div>
-    )
-  }
-
-  const { weeks, categories, totals } = data
-  const wl = (w) => `${w.start.slice(8, 10)}/${w.start.slice(5, 7)}`
-  return (
-    <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-        <div className="stat-card" style={styles.statCard}>
-          <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>{totals.messages}</div>
-          <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>tin nhắn đã gửi</div>
-        </div>
-        <div className="stat-card" style={styles.statCard}>
-          <div style={{ fontSize: fs(22), fontWeight: '700', color: 'var(--text-strong)' }}>
-            {totals.mastered}/{totals.mistakes}
-          </div>
-          <div style={{ fontSize: fs(11), color: 'var(--text-muted)' }}>lỗi đã nhớ vững</div>
-        </div>
-      </div>
-
-      {/* Thẻ mới: Kỹ năng cần luyện */}
-      {(() => {
-        const sk = data.skills || []
-        const scored = sk.filter((s) => s.mastery !== null).sort((a, b) => a.mastery - b.mastery).slice(0, 3)
-        const chatOnly = sk.filter((s) => s.chatErrors > 0).sort((a, b) => b.chatErrors - a.chatErrors).slice(0, 3)
-        const list = scored.length > 0 ? scored : chatOnly
-        return (
-          <div className="stat-card" style={styles.statCard}>
-            <div style={{ fontSize: fs(13), fontWeight: '700' }}>Kỹ năng cần luyện</div>
-            <div style={{ fontSize: fs(11), color: 'var(--text-muted)', margin: '2px 0 8px' }}>
-              {scored.length > 0 ? 'Điểm thấp nhất từ quiz và ôn lỗi' : 'Dựa trên lỗi trong chat (chưa có điểm quiz)'}
-            </div>
-            {list.length === 0 && (
-              <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>Làm vài bài trắc nghiệm để có dữ liệu.</div>
-            )}
-            {list.map((s) => (
-              <div key={s.id} style={{ marginBottom: '8px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: fs(12) }}>
-                  <span>{s.label}</span>
-                  <strong>{s.mastery !== null ? s.mastery : `${s.chatErrors} lỗi`}</strong>
-                </div>
-                <div style={{ height: '5px', borderRadius: '999px', background: 'var(--border-soft)', marginTop: '4px', overflow: 'hidden' }}>
-                  <div style={{ width: `${s.mastery ?? 0}%`, height: '100%', background: masteryColor(s.mastery), borderRadius: '999px' }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )
-      })()}
-
-      <div className="stat-card" style={styles.statCard}>
-        <div style={{ fontSize: fs(13), fontWeight: '700', marginBottom: '4px' }}>Loại lỗi hay gặp</div>
-        <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginBottom: '6px' }}>4 tuần gần đây so với trước đó</div>
-        {categories.length === 0 && <div style={{ fontSize: fs(12), color: 'var(--text-muted)' }}>Chưa có dữ liệu</div>}
-        {categories.slice(0, 3).map((c) => {
-          const diff = c.recent - c.previous
-          const badge =
-            c.previous === 0
-              ? { text: 'Mới', color: 'var(--text-muted)' }
-              : diff < 0
-                ? { text: 'Giảm', color: '#27ae60' }
-                : diff > 0
-                  ? { text: 'Tăng', color: 'var(--danger)' }
-                  : { text: 'Giữ', color: 'var(--text-muted)' }
-          return (
-            <div key={c.category} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: fs(12), marginBottom: '4px' }}>
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.category}</span>
-              <span style={{ color: 'var(--text-muted)' }}>{c.previous}→{c.recent}</span>
-              <strong style={{ color: badge.color, minWidth: '34px', textAlign: 'right' }}>{badge.text}</strong>
-            </div>
-          )
-        })}
-      </div>
-
-      <div className="stat-card" style={styles.statCard}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-          <div style={{ fontSize: fs(13), fontWeight: '700' }}>Nhận xét của AI</div>
-          <button
-            style={{ ...notesStyles.smallAction, ...(busy ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
-            onClick={askInsight}
-            disabled={busy}
-          >
-            <Icon name="sparkle" size={12} /> {busy ? 'Đang viết...' : insight ? 'Viết lại' : 'Nhờ AI'}
-          </button>
-        </div>
-        {insight && <div style={{ marginTop: '8px', fontSize: fs(12), lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>{insight}</div>}
-        {err && <div style={{ marginTop: '8px', fontSize: fs(12), color: 'var(--danger)' }}>{err}</div>}
-      </div>
-
-      <button
-        style={{ ...notesStyles.smallAction, alignSelf: 'center', marginTop: '2px' }}
-        onClick={onOpenFull}
-      >
-        Xem đầy đủ <Icon name="next" size={12} />
-      </button>
-    </>
-  )
+  return <>
+    <div className="stat-card" style={styles.statCard}>
+      <div style={{ fontSize: fs(13), fontWeight: 700 }}>Bản đồ kỹ năng</div>
+      <div style={{ fontSize: fs(11), color: 'var(--text-muted)', marginTop: 4 }}>Kết quả từ bài tập, bài viết, phiên nói và lỗi đã ghi nhận.</div>
+      {loading ? <p style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>Đang tải dữ liệu…</p> : data ? <SkillMap skills={data.skills || []} focuses={data.exerciseFocuses || []} /> : <p style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>Chưa tải được bản đồ kỹ năng.</p>}
+    </div>
+    <button type="button" style={{ ...notesStyles.smallAction, alignSelf: 'center', marginTop: 2 }} onClick={onOpenFull}>Xem biểu đồ đánh giá <Icon name="next" size={12} /></button>
+  </>
 }
-
 
 function AddWordBox({ profileId, profile, cefrLevel, folderId, onAdded }) {
   const [text, setText] = useState('')
@@ -5406,6 +5503,10 @@ function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
   const [list, setList] = useState(cards)
   const [index, setIndex] = useState(0)
   const [flipped, setFlipped] = useState(false)
+  useEffect(() => {
+    const ipaById = new Map(cards.filter((card) => card.ipa).map((card) => [card.id, card.ipa]))
+    setList((current) => current.map((card) => ipaById.has(card.id) ? { ...card, ipa: ipaById.get(card.id) } : card))
+  }, [cards])
 
   const go = (d) => {
     if (list.length === 0) return
@@ -5462,7 +5563,7 @@ function VocabStudy({ cards, title, speakLang, speechVoice, onBack }) {
           <Icon name="speaker" size={16} />
         </button>
         {!flipped ? (
-          <div style={{ fontSize: fs(34), fontWeight: '700', color: 'var(--text-strong)' }}>{card.word}</div>
+          <div className="vocab-study-word"><strong>{card.word}</strong>{card.ipa && <span>{card.ipa}</span>}</div>
         ) : (
           <>
             <div style={{ fontSize: fs(22), fontWeight: '600' }}>{card.meaning}</div>
@@ -5506,6 +5607,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
   const [aiBusy, setAiBusy] = useState(false)
   const [toast, setToast] = useState('')
   const dragIds = useRef([])
+  const ipaFillRef = useRef(false)
   const speakLang = toSpeechLang(profile?.targetLanguage)
 
   const flash = (msg) => {
@@ -5521,6 +5623,25 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
     setWords(w.vocabulary || [])
     setFolders(f.folders || [])
     setLoading(false)
+    if (!ipaFillRef.current && (w.vocabulary || []).some((card) => !card.ipa)) {
+      ipaFillRef.current = true
+      void (async () => {
+        try {
+          for (let batch = 0; batch < 10; batch++) {
+            const result = await window.api.fillVocabularyIpa({ profileId, targetLanguage: profile?.targetLanguage })
+            if (!result?.success || !result.updated?.length) break
+            const byId = new Map(result.updated.map((item) => [item.id, item.ipa]))
+            setWords((currentWords) => currentWords.map((card) => byId.has(card.id) ? { ...card, ipa: byId.get(card.id) } : card))
+            setDetail((currentCard) => currentCard && byId.has(currentCard.id) ? { ...currentCard, ipa: byId.get(currentCard.id) } : currentCard)
+            if (!result.remaining) break
+          }
+        } catch {
+          // Keep the existing cards usable when pronunciation generation is unavailable.
+        } finally {
+          ipaFillRef.current = false
+        }
+      })()
+    }
   }
 
   useEffect(() => {
@@ -5937,6 +6058,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
               style={{ ...exStyles.card, ...(selected.has(w.id) ? exStyles.cardSel : {}) }}
             >
               <div style={exStyles.cardWord}>{w.word}</div>
+              {w.ipa && <div className="vocab-card-ipa">{w.ipa}</div>}
               <div style={exStyles.cardMeaning}>{w.meaning}</div>
               {current === 'all' && w.folder_id && folderName(w.folder_id) && <span style={exStyles.tag}>{folderName(w.folder_id)}</span>}
             </div>
@@ -5960,6 +6082,7 @@ function VocabScreen({ profileId, profile, cefrLevel, speechVoice, onExit }) {
               </button>
             </div>
 
+            {detail.ipa && <div className="vocab-detail-ipa">{detail.ipa}</div>}
             <div style={{ fontSize: fs(16), fontWeight: '600', marginBottom: '8px' }}>{detail.meaning}</div>
             {detail.example_sentence && (
               <div style={{ fontSize: fs(14), color: 'var(--text-soft)', fontStyle: 'italic', marginBottom: '16px', lineHeight: 1.5 }}>
@@ -6231,8 +6354,9 @@ function MistakeNotebook({ mistakes, onBack, onPractice }) {
   )
 }
 
-function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfileChange, onLevelControlChange }) {
+function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfileChange, onLevelControlChange, onWelcomeChange }) {
   const [step, setStep] = useState(0)
+  useEffect(() => { onWelcomeChange?.(step === 0) }, [step, onWelcomeChange])
   const [profile, setProfile]= useState({
     nativeLanguage:'',
     targetLanguage:'',
@@ -6259,6 +6383,9 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [voiceSessionFeedbackError, setVoiceSessionFeedbackError] = useState('')
   const [voiceSpeakingHint, setVoiceSpeakingHint] = useState(null)
   const [voiceHelperOpen, setVoiceHelperOpen] = useState(false)
+  const [helperWordQuery, setHelperWordQuery] = useState('')
+  const [helperWordResult, setHelperWordResult] = useState(null)
+  const helperWordRequestRef = useRef(0)
   const [voiceSpeakingHintLoading, setVoiceSpeakingHintLoading] = useState(false)
   const [voiceSpeakingHintError, setVoiceSpeakingHintError] = useState('')
   const [voiceChallenge, setVoiceChallenge] = useState(null)
@@ -6305,7 +6432,11 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [showStructures, setShowStructures] = useState(false)
   const [initialStructureId, setInitialStructureId] = useState(null)
   const [showProgress, setShowProgress] = useState(false)
+  const [showAssessmentHub, setShowAssessmentHub] = useState(false)
   const [showAssessment, setShowAssessment] = useState(false)
+  const [showListeningAssessment, setShowListeningAssessment] = useState(false)
+  const [showSpeakingAssessment, setShowSpeakingAssessment] = useState(false)
+  const [showWritingAssessment, setShowWritingAssessment] = useState(false)
   const [assessmentBaseline, setAssessmentBaseline] = useState(null)
   const [showVoiceChat, setShowVoiceChat] = useState(false)
   const [rightTab, setRightTab] = useState('today') 
@@ -6342,10 +6473,6 @@ function AppContent({ settings, onOpenSettings, onLoggedInChange, onActiveProfil
   const [placementError, setPlacementError] = useState('')
   const [levelNotice, setLevelNotice] = useState('')
   const [dailyStats, setDailyStats] = useState({ messagesToday: 0, streak: 0, totalMessages: 0, familiarity: null })
-  const [showNotes, setShowNotes] = useState(false)
-  const [notesForm, setNotesForm] = useState({ notes: '', enabled: true })
-  const [notesBusy, setNotesBusy] = useState(false)
-  const [notesMsg, setNotesMsg] = useState('')
   const chatBoxRef = useRef(null)
   const prevLenRef = useRef(0)
   const prevVoiceLenRef = useRef(0)
@@ -6585,37 +6712,6 @@ const handleOpenEditProfile = () => {
   setShowEditProfile(true)
 }
 
-const handleOpenNotes = async () => {
-  stopVoicePractice()
-  setNotesMsg('')
-  const res = await window.api.getLearnerNotes({ profileId })
-  setNotesForm({ notes: res.notes || '', enabled: res.enabled !== false })
-  refreshDailyStats()
-  setShowNotes(true)
-}
-
-const handleSaveNotes = async () => {
-  setNotesBusy(true)
-  await window.api.saveLearnerNotes({ profileId, notes: notesForm.notes, enabled: notesForm.enabled })
-  setNotesBusy(false)
-  setShowNotes(false)
-}
-
-const handleRefreshNotes = async () => {
-  setNotesBusy(true)
-  setNotesMsg('')
-  // lưu bản đang sửa trước để AI cập nhật dựa trên đúng nội dung người học thấy
-  await window.api.saveLearnerNotes({ profileId, notes: notesForm.notes, enabled: notesForm.enabled })
-  const res = await window.api.refreshLearnerNotes({ profileId })
-  setNotesBusy(false)
-  if (res.success && res.updated) {
-    setNotesForm((f) => ({ ...f, notes: res.notes }))
-    setNotesMsg('Đã cập nhật ghi chú.')
-  } else {
-    setNotesMsg('Chưa cập nhật được (cần có tin nhắn, hoặc AI đang bận).')
-  }
-}
-
 const handleSaveEditProfile = async () => {
   setIsSavingProfile(true)
   const res = await window.api.updateProfile({
@@ -6665,10 +6761,10 @@ useEffect(() => {
 }, [profileId])
 
 useEffect(() => {
-  if (showReview || showPractice || showVocab || showStructures || showProgress || showAssessment || showVoiceChat || showEditProfile || showTopicPicker || showNotes) {
+  if (showReview || showPractice || showVocab || showStructures || showProgress || showAssessmentHub || showAssessment || showListeningAssessment || showSpeakingAssessment || showWritingAssessment || showVoiceChat || showEditProfile || showTopicPicker) {
     setActiveChatStructureSuggestion(null)
   }
-}, [showReview, showPractice, showVocab, showStructures, showProgress, showAssessment, showVoiceChat, showEditProfile, showTopicPicker, showNotes])
+}, [showReview, showPractice, showVocab, showStructures, showProgress, showAssessmentHub, showAssessment, showListeningAssessment, showSpeakingAssessment, showWritingAssessment, showVoiceChat, showEditProfile, showTopicPicker])
 
 useEffect(() => {
   onLoggedInChange && onLoggedInChange(step >= 5)
@@ -6894,6 +6990,10 @@ const handleVoiceTranscript = (transcript) => {
 }
 
 const voiceInput = useSpeechInput(handleVoiceTranscript, setVoiceSpeechDetected)
+const chatMicInput = useSpeechInput((transcript) => {
+  const phrase = cleanRepeatedTranscript(transcript).trim()
+  if (phrase) setChatInput((current) => current.trim() ? `${current.trimEnd()} ${phrase}` : phrase)
+})
 
 const pauseVoiceChat = () => {
   if (!voiceModeRef.current || voicePausedRef.current) return
@@ -6928,6 +7028,20 @@ const lookupVoiceWord = async (word, sentence, messageIndex) => {
       : { word, messageIndex, error: result?.error || 'Chưa tra được từ này.' })
   } catch {
     if (requestId === voiceWordLookupRequestRef.current) setVoiceWordLookup({ word, messageIndex, error: 'Chưa tra được từ này.' })
+  }
+}
+
+const lookupHelperWord = async (event) => {
+  event.preventDefault()
+  const query = helperWordQuery.trim()
+  if (!query) return
+  const requestId = ++helperWordRequestRef.current
+  setHelperWordResult({ loading: true })
+  try {
+    const result = await window.api.lookupHelperWord({ query })
+    if (requestId === helperWordRequestRef.current) setHelperWordResult(result?.success ? result : { error: result?.error || 'Chưa tra được từ này.' })
+  } catch {
+    if (requestId === helperWordRequestRef.current) setHelperWordResult({ error: 'Chưa tra được từ này.' })
   }
 }
 
@@ -7398,20 +7512,35 @@ const dueCount = mistakes.filter((m) => !m.next_review_at || m.next_review_at <=
 
 if (step === 0) {
   return (
-    <div style={styles.container} className="fade-in" key="login">
+    <div style={styles.container} className="fade-in welcome-screen" key="login">
       <style>{fadeStyle}</style>
       <style>{loginCss}</style>
-      <h2 style={styles.question}>Chào mừng trở lại!</h2>
+      <div className="welcome-layout">
+        <section className="welcome-hero" aria-labelledby="welcome-title">
+          <div className="welcome-brand"><span className="welcome-brand-mark"><Icon name="sparkle" size={22} /></span><span>ENGLISH AI TUTOR</span></div>
+          <div className="welcome-hero-content">
+            <span className="welcome-eyebrow">KHÔNG GIAN HỌC TẬP CỦA BẠN</span>
+            <h1 id="welcome-title">Mỗi ngày một bước<br /><span>tiến bộ tiếng Anh.</span></h1>
+            <p>Tiếp tục hành trình của bạn với luyện nói, nghe, viết và những bài ôn tập được điều chỉnh theo tiến độ học.</p>
+            <div className="welcome-feature-list" aria-label="Các hoạt động học tập">
+              <span><Icon name="mic" size={16} /> Luyện nói</span>
+              <span><Icon name="speaker" size={16} /> Luyện nghe</span>
+              <span><Icon name="trend" size={16} /> Theo dõi tiến bộ</span>
+            </div>
+          </div>
+          <div className="welcome-hero-footer">HỌC THEO NHỊP ĐỘ CỦA BẠN <span aria-hidden="true">✦</span></div>
+        </section>
 
-      <div style={styles.loginWrapper}>
+      <div className="welcome-entry" style={styles.loginWrapper}>
+        <div className="welcome-entry-heading"><span>CHÀO MỪNG TRỞ LẠI</span><h2>Hôm nay bạn muốn học với ai?</h2><p>Chọn hồ sơ để tiếp tục hoặc tạo hồ sơ mới.</p></div>
         {existingProfiles.length > 0 && (
-          <div style={styles.loginCard}>
-            <div style={styles.loginCardTitle}>Tài khoản của bạn</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div className="welcome-card" style={styles.loginCard}>
+            <div className="welcome-card-heading"><span>HỒ SƠ CỦA BẠN</span><small>{existingProfiles.length} hồ sơ</small></div>
+            <div className="welcome-profile-list">
               {existingProfiles.map((p) => (
                 <button
                   key={p.id}
-                  className="account-row"
+                  className="account-row welcome-profile"
                   style={styles.accountRow}
                   onClick={() => handleLoginExisting(p)}
                 >
@@ -7420,19 +7549,22 @@ if (step === 0) {
                     <span style={styles.accountName}>{p.username}</span>
                     <span style={styles.accountLevel}>Trình độ {p.cefr_level}</span>
                   </span>
+                  <Icon name="next" size={16} />
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        <div style={styles.loginCard}>
-          <div style={styles.loginCardTitle}>Tạo tài khoản mới</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div className="welcome-card welcome-create" style={styles.loginCard}>
+          <div className="welcome-card-heading"><span>TẠO HỒ SƠ MỚI</span></div>
+          <div className="welcome-create-fields">
+            <label htmlFor="welcome-username">Tên của bạn</label>
             <input
+              id="welcome-username"
               style={{ ...styles.input, width: '100%' }}
               type="text"
-              placeholder="Nhập tên của bạn"
+              placeholder="Bạn muốn được gọi là gì?"
               value={username}
               onChange={(e) => {
                 setUsername(e.target.value)
@@ -7440,7 +7572,7 @@ if (step === 0) {
               }}
             />
             {usernameError && (
-              <p style={{ color: 'var(--danger)', fontSize: fs(13), margin: 0 }}>{usernameError}</p>
+              <p className="welcome-error" role="alert">{usernameError}</p>
             )}
             <button
               className="onboarding-primary"
@@ -7448,10 +7580,11 @@ if (step === 0) {
               onClick={handleStartNewAccount}
               disabled={!username.trim()}
             >
-              <Icon name="user" size={16} /> Bắt đầu
+              Bắt đầu học <Icon name="next" size={16} />
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   )
@@ -7760,12 +7893,24 @@ if (showVocab) {
         profile={profile}
         onExit={() => setShowProgress(false)}
         onOpenStructures={(structureId) => { setInitialStructureId(structureId); setShowProgress(false); setShowStructures(true) }}
-        onStartAssessment={(attempt) => {
-          setAssessmentBaseline(attempt)
-          setShowAssessment(true)
-        }}
       />
     )
+  }
+
+  if (showListeningAssessment) {
+    return <div className="assessment-hub"><ListeningPracticeScreen profileId={profileId} profile={profile} cefrLevel={placementResult?.level || 'A1'} speechVoice={settings.speechVoice} assessment onExit={() => setShowListeningAssessment(false)} /></div>
+  }
+
+  if (showSpeakingAssessment) {
+    return <div className="assessment-hub"><SpeakingAssessmentScreen profileId={profileId} profile={profile} cefrLevel={placementResult?.level || 'A1'} speechVoice={settings.speechVoice} onExit={() => setShowSpeakingAssessment(false)} /></div>
+  }
+
+  if (showWritingAssessment) {
+    return <div className="assessment-hub"><WritingPracticeScreen profileId={profileId} profile={profile} cefrLevel={placementResult?.level || 'A1'} assessment onExit={() => setShowWritingAssessment(false)} /></div>
+  }
+
+  if (showAssessmentHub) {
+    return <AssessmentHub profileId={profileId} onExit={() => setShowAssessmentHub(false)} onStartKnowledge={(attempt) => { setAssessmentBaseline(attempt); setShowAssessment(true) }} onStartListening={() => setShowListeningAssessment(true)} onStartSpeaking={() => setShowSpeakingAssessment(true)} onStartWriting={() => setShowWritingAssessment(true)} />
   }
 
 if (showPractice) {
@@ -8091,25 +8236,34 @@ if (showVoiceChat) {
             <span className="voice-helper-icon"><Icon name="sparkle" size={16} /></span>
             <div><span className="voice-side-eyebrow">TRỢ LÝ LUYỆN NÓI</span><h2>Đang bí câu trả lời?</h2></div>
           </div>
-          <p className="voice-helper-intro">AI sẽ gợi ý một câu phù hợp với tình huống, giải thích vì sao nên nói vậy và cách dùng cụm từ quan trọng.</p>
-          <button type="button" className="voice-helper-request" onClick={requestVoiceSpeakingHint} disabled={!voiceMode || voiceSpeakingHintLoading || isChatLoading || isVoiceSpeaking || voiceChallengeLoading || Boolean(voiceChallenge) || Boolean(voicePendingTranscript) || voiceInput.transcribing}>
-            {voiceSpeakingHintLoading ? <><span className="voice-feedback-spinner" /> Đang nghĩ gợi ý…</> : <><Icon name="sparkle" size={15} /> Gợi ý cách trả lời</>}
-          </button>
-          <button type="button" className="voice-helper-request voice-helper-challenge" onClick={() => requestVoiceMicroChallenge()} disabled={!voiceMode || voiceChallengeLoading || Boolean(voiceChallenge) || voiceSpeakingHintLoading || isChatLoading || isVoiceSpeaking || Boolean(voicePendingTranscript) || voiceInput.transcribing}>
-            <Icon name="cards" size={15} /> Luyện nhanh theo chủ đề
-          </button>
+          <div className="voice-helper-dictionary">
+            <div className="voice-helper-section-heading"><span className="voice-helper-section-icon"><Icon name="book" size={15} /></span><div><strong>Tra từ Anh · Việt</strong><small>Nghĩa, IPA và phát âm trong một chỗ</small></div></div>
+            <form onSubmit={lookupHelperWord}>
+              <input id="voice-helper-word-query" aria-label="Từ cần tra" value={helperWordQuery} onChange={(event) => setHelperWordQuery(event.target.value)} placeholder="Nhập từ tiếng Anh hoặc tiếng Việt…" maxLength={80} />
+              <button type="submit" disabled={!helperWordQuery.trim() || helperWordResult?.loading}>Tra từ</button>
+            </form>
+            {helperWordResult && <div className="voice-helper-dictionary-result" role="status">
+              {helperWordResult.loading ? <span>Đang tra từ…</span> : helperWordResult.error ? <span>{helperWordResult.error}</span> : <>
+                <div className="voice-helper-dictionary-word"><strong>{helperWordResult.english}</strong><button type="button" onClick={() => speakNaturalText(helperWordResult.english, 'en-US', undefined, settings.speechVoice)} aria-label={`Nghe phát âm ${helperWordResult.english}`} title="Nghe phát âm"><Icon name="speaker" size={16} /></button></div>
+                {helperWordResult.ipa && <span className="voice-helper-dictionary-ipa">{helperWordResult.ipa}</span>}
+                <p>{helperWordResult.vietnamese}</p>
+                {helperWordResult.example && <div className="voice-helper-dictionary-example"><span>{helperWordResult.example}</span>{helperWordResult.translation && <small>{helperWordResult.translation}</small>}</div>}
+              </>}
+            </div>}
+          </div>
+          <div className="voice-helper-coach">
+            <div className="voice-helper-section-heading"><span className="voice-helper-section-icon"><Icon name="sparkle" size={15} /></span><div><strong>Gợi ý luyện nói</strong><small>{voiceMode ? 'Hỗ trợ theo cuộc trò chuyện hiện tại' : 'Bắt đầu hội thoại để dùng gợi ý'}</small></div></div>
+            <div className="voice-helper-actions">
+              <button type="button" className="voice-helper-request" onClick={requestVoiceSpeakingHint} disabled={!voiceMode || voiceSpeakingHintLoading || isChatLoading || isVoiceSpeaking || voiceChallengeLoading || Boolean(voiceChallenge) || Boolean(voicePendingTranscript) || voiceInput.transcribing}>
+                {voiceSpeakingHintLoading ? <><span className="voice-feedback-spinner" /> Đang nghĩ gợi ý…</> : <><Icon name="sparkle" size={15} /> Gợi ý cách trả lời</>}
+              </button>
+              <button type="button" className="voice-helper-request voice-helper-challenge" onClick={() => requestVoiceMicroChallenge()} disabled={!voiceMode || voiceChallengeLoading || Boolean(voiceChallenge) || voiceSpeakingHintLoading || isChatLoading || isVoiceSpeaking || Boolean(voicePendingTranscript) || voiceInput.transcribing}>
+                <Icon name="cards" size={15} /> Luyện nhanh theo chủ đề
+              </button>
+            </div>
+          </div>
           {voiceChallengeError && <div className="voice-helper-error" role="status">{voiceChallengeError}</div>}
           {voiceLastLearned && <div className="voice-helper-topic"><strong>{voiceChallenge ? 'Từ đang học' : 'Từ vừa học'}: {voiceLastLearned.word}</strong><span>{voiceLastLearned.meaning}</span>{voiceLastLearned.usage && <small>{voiceLastLearned.usage}</small>}{voiceChallenge && <small>Hoàn thành bài tập ở giữa màn hình để tiếp tục hội thoại.</small>}</div>}
-          {!voiceMode && <div className="voice-helper-empty">
-            <strong>Gợi ý đúng lúc, không làm gián đoạn</strong>
-            <span>Khi bắt đầu phiên, bạn có thể xin một câu mẫu, xem lý do dùng câu đó và nghe cách phát âm.</span>
-          </div>}
-          {!voiceMode && <div className="voice-helper-preview">
-            <span className="voice-guide-title">BẠN CÓ THỂ NHỜ AI</span>
-            <div><Icon name="sparkle" size={14} /><span>Gợi ý câu trả lời tự nhiên</span></div>
-            <div><Icon name="book" size={14} /><span>Giải thích cụm từ quan trọng</span></div>
-            <div><Icon name="speaker" size={14} /><span>Nghe câu mẫu bằng tiếng Anh</span></div>
-          </div>}
           {voicePendingTranscript && <div className="voice-helper-empty"><span>Gửi hoặc nói lại câu đang chờ trước khi xin gợi ý.</span></div>}
           {voiceSpeakingHintError && <div className="voice-helper-error" role="alert">{voiceSpeakingHintError}</div>}
           {voiceSpeakingHint && <div className="voice-helper-result" aria-live="polite">
@@ -8215,85 +8369,6 @@ return (
       </div>
     )}
 
-            {showNotes && (
-      <div style={settingsStyles.overlay} onClick={() => setShowNotes(false)}>
-        <div style={{ ...settingsStyles.modal, width: '480px', padding: 0 }} onClick={(e) => e.stopPropagation()}>
-          <div style={notesStyles.header}>
-            <div style={notesStyles.headIcon}>
-              <Icon name="sparkle" size={20} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={notesStyles.title}>AI biết gì về bạn</div>
-              <div style={notesStyles.subtitle}>Những điều AI nhớ để trò chuyện sát với bạn hơn</div>
-            </div>
-            <button style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={() => setShowNotes(false)}>
-              <Icon name="close" />
-            </button>
-          </div>
-
-          <div style={notesStyles.body}>
-            <div style={notesStyles.toggleCard}>
-              <div style={rowStyles.textCol}>
-                <div style={rowStyles.title}>Cho phép AI ghi nhớ</div>
-                <div style={rowStyles.desc}>Tắt thì AI không tạo và không dùng ghi chú khi trò chuyện</div>
-              </div>
-              <ToggleSwitch checked={notesForm.enabled} onChange={(v) => setNotesForm({ ...notesForm, enabled: v })} />
-            </div>
-
-            <div>
-              <div style={notesStyles.labelRow}>
-                <span style={notesStyles.label}>Ghi chú của AI</span>
-                <div style={notesStyles.actions}>
-                  <button
-                    style={{ ...notesStyles.smallAction, ...(notesBusy || !notesForm.notes ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}
-                    onClick={() => setNotesForm({ ...notesForm, notes: '' })}
-                    disabled={notesBusy || !notesForm.notes}
-                  >
-                    <Icon name="trash" size={12} /> Xoá hết
-                  </button>
-                  <button
-                    style={{ ...notesStyles.smallAction, ...(notesBusy || !notesForm.enabled ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}
-                    onClick={handleRefreshNotes}
-                    disabled={notesBusy || !notesForm.enabled}
-                  >
-                    <Icon name="repeat" size={12} /> {notesBusy ? 'Đang xử lý...' : 'Cập nhật ngay'}
-                  </button>
-                </div>
-              </div>
-
-              <textarea
-                style={{ ...notesStyles.textarea, ...(!notesForm.enabled ? { opacity: 0.55 } : {}) }}
-                maxLength={600}
-                value={notesForm.notes}
-                onChange={(e) => setNotesForm({ ...notesForm, notes: e.target.value })}
-                placeholder="Chưa có ghi chú. AI sẽ tự cập nhật sau mỗi khoảng 10 tin nhắn, hoặc bạn có thể tự viết ở đây."
-                disabled={!notesForm.enabled || notesBusy}
-              />
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginTop: '8px' }}>
-                <span style={notesStyles.hint}>
-                  {notesMsg || 'Bạn có thể sửa hoặc xoá bất cứ lúc nào. Ghi chú được lưu trên máy này.'}
-                </span>
-                <span style={{ ...notesStyles.hint, flexShrink: 0 }}>{notesForm.notes.length}/600</span>
-              </div>
-            </div>
-          </div>
-
-          <div style={notesStyles.footer}>
-            <button style={notesStyles.ghostBtn} onClick={() => setShowNotes(false)} disabled={notesBusy}>
-              Huỷ
-            </button>
-            <button
-              style={{ ...notesStyles.primaryBtn, ...(notesBusy ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
-              onClick={handleSaveNotes}
-              disabled={notesBusy}
-            >
-              Lưu
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
     {/* Sidebar trái */}
         <aside className="sidebar" style={styles.sidebarV2}>
       <div className="sidebar-brand"><span>ENGLISH AI TUTOR</span><strong>Không gian học tập</strong></div>
@@ -8301,32 +8376,38 @@ return (
         <Icon name="plus" size={16} /> Đoạn chat mới
       </button>
 
-      <nav className="nav-list" style={styles.navList}>
-        <button className="nav-item" style={styles.navItem} onClick={handleOpenReview}>
-          <Icon name="book" size={17} /> Sổ tay lỗi sai
-        </button>
-        <button className="nav-item" style={{ ...styles.navItem, ...(showVoiceChat ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : {}) }} onClick={() => { stopVoicePractice(); setVoiceChatHistory([]); setVoiceChatMode('free'); setActiveVoiceScenarioPrompt(''); setActiveVoiceScenarioTitle(''); setVoiceError(''); setShowVoiceChat(true) }}>
-          <Icon name="mic" size={17} /> Trò chuyện bằng giọng nói
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('listening'); setShowPractice(true) }}>
-          <Icon name="speaker" size={17} /> Luyện nghe
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('setup'); setShowPractice(true) }}>
-          <Icon name="repeat" size={17} /> <span style={{ flex: 1, textAlign: 'left' }}>Ôn tập</span>
-          {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowVocab(true) }}>
-          <Icon name="cards" size={17} /> Từ vựng
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setInitialStructureId(null); setShowStructures(true) }}>
-          <Icon name="layers" size={17} /> Cấu trúc câu
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowProgress(true) }}>
-          <Icon name="trend" size={17} /> Tiến bộ
-        </button>
-        <button className="nav-item" style={styles.navItem} onClick={handleOpenNotes}>
-          <Icon name="user" size={17} /> AI biết gì về bạn
-        </button>
+      <nav className="nav-list" style={styles.navList} aria-label="Điều hướng học tập">
+        <div className="sidebar-nav-group">
+          <span className="sidebar-group-label">HỌC & LUYỆN</span>
+          <button className="nav-item" style={{ ...styles.navItem, ...(showVoiceChat ? { background: 'var(--accent-soft)', color: 'var(--accent-text)' } : {}) }} onClick={() => { stopVoicePractice(); setVoiceChatHistory([]); setVoiceChatMode('free'); setActiveVoiceScenarioPrompt(''); setActiveVoiceScenarioTitle(''); setVoiceError(''); setShowVoiceChat(true) }}>
+            <Icon name="mic" size={17} /> Luyện nói
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('listening'); setShowPractice(true) }}>
+            <Icon name="speaker" size={17} /> Luyện nghe
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowVocab(true) }}>
+            <Icon name="cards" size={17} /> Từ vựng
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setInitialStructureId(null); setShowStructures(true) }}>
+            <Icon name="layers" size={17} /> Cấu trúc câu
+          </button>
+        </div>
+        <div className="sidebar-nav-group">
+          <span className="sidebar-group-label">ÔN & ĐÁNH GIÁ</span>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setReviewInitialMode('setup'); setShowPractice(true) }}>
+            <Icon name="repeat" size={17} /> <span style={{ flex: 1, textAlign: 'left' }}>Ôn tập</span>
+            {dueCount > 0 && <span style={styles.dueBadge}>{dueCount > 99 ? '99+' : dueCount}</span>}
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={handleOpenReview}>
+            <Icon name="book" size={17} /> Sổ tay lỗi sai
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowAssessmentHub(true) }}>
+            <Icon name="check" size={17} /> Kiểm tra
+          </button>
+          <button className="nav-item" style={styles.navItem} onClick={() => { stopVoicePractice(); setShowProgress(true) }}>
+            <Icon name="trend" size={17} /> Tiến bộ
+          </button>
+        </div>
       </nav>
 
       <div className="conversation-list" style={styles.convSectionV2}>
@@ -8535,24 +8616,28 @@ return (
           style={{ ...styles.input, width: '100%' }}
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-          placeholder="Nhập tin nhắn..."
+          onKeyDown={(e) => e.key === 'Enter' && !chatMicInput.listening && !chatMicInput.transcribing && handleSendMessage()}
+          placeholder={chatMicInput.listening ? 'Đang nghe... Nhấn micro để dừng' : chatMicInput.transcribing ? 'Đang nhận diện giọng nói...' : 'Nhập tin nhắn...'}
           disabled={isChatLoading}
         />
+        <button type="button" className={`chat-mic${chatMicInput.listening ? ' is-recording' : ''}`} onClick={() => chatMicInput.listening ? chatMicInput.stop() : chatMicInput.start()} disabled={!chatMicInput.supported || chatMicInput.transcribing || isChatLoading} title={chatMicInput.listening ? 'Dừng ghi âm' : 'Nhập bằng giọng nói'} aria-label={chatMicInput.listening ? 'Dừng ghi âm' : 'Nhập bằng giọng nói'} aria-pressed={chatMicInput.listening}>
+          <Icon name="mic" size={19} />
+        </button>
         <button
     className="chat-send"
     style={{
       ...styles.sendButton,
-      ...(isChatLoading || !chatInput.trim() ? { opacity: 0.4, cursor: 'not-allowed' } : {})
+      ...(isChatLoading || chatMicInput.listening || chatMicInput.transcribing || !chatInput.trim() ? { opacity: 0.4, cursor: 'not-allowed' } : {})
     }}
     onClick={handleSendMessage}
-    disabled={isChatLoading || !chatInput.trim()}
+    disabled={isChatLoading || chatMicInput.listening || chatMicInput.transcribing || !chatInput.trim()}
     title="Gửi"
     aria-label="Gửi"
   >
     <Icon name="send" size={20} />
   </button>
 </div>
+      {chatMicInput.error && <div className="chat-mic-status" role="alert">{chatMicInput.error}</div>}
     </main>
 
       {/* Panel thống kê phải */}
@@ -9520,11 +9605,68 @@ function MicrophoneTest() {
   )
 }
 
+function LearnerNotesModal({ profileId, onClose }) {
+  const [form, setForm] = useState({ notes: '', enabled: true })
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    let active = true
+    window.api.getLearnerNotes({ profileId }).then((result) => {
+      if (active) setForm({ notes: result?.notes || '', enabled: result?.enabled !== false })
+    }).catch(() => { if (active) setMessage('Chưa tải được ghi chú.') })
+    return () => { active = false }
+  }, [profileId])
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      const result = await window.api.saveLearnerNotes({ profileId, notes: form.notes, enabled: form.enabled })
+      if (!result?.success) throw new Error('Save failed')
+      onClose()
+    } catch {
+      setMessage('Chưa lưu được ghi chú. Hãy thử lại.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const refresh = async () => {
+    setBusy(true)
+    setMessage('')
+    try {
+      const saved = await window.api.saveLearnerNotes({ profileId, notes: form.notes, enabled: form.enabled })
+      if (!saved?.success) throw new Error('Save failed')
+      const result = await window.api.refreshLearnerNotes({ profileId })
+      if (result?.success && result.updated) {
+        setForm((current) => ({ ...current, notes: result.notes || '' }))
+        setMessage('Đã cập nhật ghi chú.')
+      } else setMessage('Chưa cập nhật được ghi chú lúc này.')
+    } catch {
+      setMessage('Chưa cập nhật được ghi chú lúc này.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <div style={{ ...settingsStyles.overlay, zIndex: 2100 }} onClick={() => !busy && onClose()}>
+    <div style={{ ...settingsStyles.modal, width: '480px', padding: 0 }} onClick={(event) => event.stopPropagation()}>
+      <div style={notesStyles.header}><div style={notesStyles.headIcon}><Icon name="sparkle" size={20} /></div><div style={{ flex: 1, minWidth: 0 }}><div style={notesStyles.title}>AI biết gì về bạn</div><div style={notesStyles.subtitle}>Những điều AI nhớ để trò chuyện sát với bạn hơn</div></div><button type="button" style={{ ...settingsStyles.closeButton, display: 'flex' }} onClick={onClose} aria-label="Đóng"><Icon name="close" /></button></div>
+      <div style={notesStyles.body}>
+        <div style={notesStyles.toggleCard}><div style={rowStyles.textCol}><div style={rowStyles.title}>Cho phép AI ghi nhớ</div><div style={rowStyles.desc}>Tắt thì AI không tạo và không dùng ghi chú khi trò chuyện</div></div><ToggleSwitch checked={form.enabled} onChange={(enabled) => setForm((current) => ({ ...current, enabled }))} /></div>
+        <div><div style={notesStyles.labelRow}><span style={notesStyles.label}>Ghi chú của AI</span><div style={notesStyles.actions}><button type="button" style={notesStyles.smallAction} onClick={() => setForm((current) => ({ ...current, notes: '' }))} disabled={busy || !form.notes}><Icon name="trash" size={12} /> Xoá hết</button><button type="button" style={notesStyles.smallAction} onClick={refresh} disabled={busy || !form.enabled}><Icon name="repeat" size={12} /> {busy ? 'Đang xử lý…' : 'Cập nhật ngay'}</button></div></div><textarea style={{ ...notesStyles.textarea, ...(!form.enabled ? { opacity: 0.55 } : {}) }} maxLength={600} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} placeholder="Chưa có ghi chú. AI sẽ tự cập nhật sau mỗi khoảng 10 tin nhắn, hoặc bạn có thể tự viết ở đây." disabled={!form.enabled || busy} /><div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginTop: 8 }}><span style={notesStyles.hint}>{message || 'Bạn có thể sửa hoặc xoá bất cứ lúc nào. Ghi chú được lưu trên máy này.'}</span><span style={{ ...notesStyles.hint, flexShrink: 0 }}>{form.notes.length}/600</span></div></div>
+      </div>
+      <div style={notesStyles.footer}><button type="button" style={notesStyles.ghostBtn} onClick={onClose} disabled={busy}>Huỷ</button><button type="button" style={notesStyles.primaryBtn} onClick={save} disabled={busy}>Lưu</button></div>
+    </div>
+  </div>
+}
+
 function SettingsModal({ settings, onChange, onClose, profileId, levelControl }) {
   const [confirmClearMemory, setConfirmClearMemory] = useState(false)
   const [clearingMemory, setClearingMemory] = useState(false)
   const [memoryMessage, setMemoryMessage] = useState('')
   const [voicePreview, setVoicePreview] = useState('')
+  const [showLearnerNotes, setShowLearnerNotes] = useState(false)
 
   const previewVoice = async () => {
     setVoicePreview('Đang tải và phát giọng AI Kokoro… lần đầu có thể mất một chút thời gian.')
@@ -9655,17 +9797,17 @@ function SettingsModal({ settings, onChange, onClose, profileId, levelControl })
         <div style={{ ...rowStyles.row, ...rowStyles.rowLast, alignItems: 'flex-start' }}>
           <div style={rowStyles.textCol}>
             <div style={rowStyles.title}>Bộ nhớ AI</div>
-            <div style={rowStyles.desc}>Xoá ghi chú AI đã lưu về bạn. Lịch sử tin nhắn sẽ không bị xoá.</div>
+            <div style={rowStyles.desc}>Xem và chỉnh sửa những điều AI nhớ về bạn.</div>
             {memoryMessage && <div role="status" style={{ ...rowStyles.desc, color: 'var(--text)' }}>{memoryMessage}</div>}
           </div>
-          <button
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}><button type="button" className="qghost" style={{ ...quizStyles.ghost, padding: '8px 12px', fontSize: fs(13) }} onClick={() => setShowLearnerNotes(true)} disabled={!profileId}><Icon name="user" size={14} /> Xem ghi chú</button><button
             type="button"
             style={{ ...styles.dangerButton, padding: '8px 14px', fontSize: fs(13), flexShrink: 0, opacity: !profileId || clearingMemory ? 0.55 : 1 }}
             onClick={() => setConfirmClearMemory(true)}
             disabled={!profileId || clearingMemory}
           >
             <Icon name="trash" size={14} /> Xoá bộ nhớ
-          </button>
+          </button></div>
         </div>
       </div>
       </div>
@@ -9685,6 +9827,7 @@ function SettingsModal({ settings, onChange, onClose, profileId, levelControl })
           </div>
         </div>
       )}
+      {showLearnerNotes && <LearnerNotesModal profileId={profileId} onClose={() => setShowLearnerNotes(false)} />}
     </>
   )
 }
@@ -9693,6 +9836,7 @@ function App() {
   const [settings, setSettings] = useState(loadSettings)
   const [showSettings, setShowSettings] = useState(false)
   const [loggedIn, setLoggedIn] = useState(false)
+  const [showWelcome, setShowWelcome] = useState(true)
   const [activeProfileId, setActiveProfileId] = useState(null)
   const [levelControl, setLevelControl] = useState(null)
   useLayoutEffect(() => {
@@ -9732,10 +9876,11 @@ function App() {
         settings={settings}
         onOpenSettings={() => setShowSettings(true)}
         onLoggedInChange={setLoggedIn}
+        onWelcomeChange={setShowWelcome}
         onActiveProfileChange={setActiveProfileId}
         onLevelControlChange={setLevelControl}
       />
-      {!loggedIn && (
+      {!loggedIn && !showWelcome && (
         <button
           style={{ ...settingsStyles.gear, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setShowSettings(true)}

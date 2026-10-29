@@ -22,3 +22,13 @@ test('other topics cannot push a pattern out of its own recent sample', () => {
   assert.equal(result.find((item) => item.focus === 'Quá khứ đơn').total, 20)
   assert.equal(result.find((item) => item.focus === 'Hiện tại đơn').correct, 4)
 })
+
+test('assessment answers are tracked separately from practice answers', () => {
+  const events = [
+    { skill: 'tense', focus: 'Hiện tại đơn', correct: 0, source: 'assessment' },
+    { skill: 'tense', focus: 'Hiện tại đơn', correct: 1, source: 'quiz' }
+  ]
+  assert.deepEqual(summarizeTopicFocusEvents(events), [
+    { skill: 'tense', focus: 'Hiện tại đơn', total: 1, correct: 1, accuracy: 100 }
+  ])
+})

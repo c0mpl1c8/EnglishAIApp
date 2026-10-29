@@ -32,3 +32,5 @@ $ npm run build:mac
 # For Linux
 $ npm run build:linux
 ```
+lyrics can still be used with a learner-provided `.lrc` or `.txt` file.
+

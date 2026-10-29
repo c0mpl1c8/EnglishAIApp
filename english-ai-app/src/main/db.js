@@ -4,6 +4,7 @@ import { join } from 'path'
 
 const dbPath = join(app.getPath('userData'), 'app.db')
 const db = new Database(dbPath)
+db.exec('DROP TABLE IF EXISTS saved_songs')
 
 // Thêm cột nếu chưa có (kiểm tra thật, không nuốt lỗi)
 function addColumnIfMissing(table, column, type) {
@@ -151,6 +152,18 @@ db.exec(`
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `)
+addColumnIfMissing('writing_submissions', 'assessment', 'INTEGER DEFAULT 0')
+addColumnIfMissing('writing_submissions', 'level', 'TEXT')
+db.exec(`
+  CREATE TABLE IF NOT EXISTS speaking_assessments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id INTEGER NOT NULL,
+    level TEXT,
+    overall INTEGER NOT NULL,
+    scores TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`)
 db.exec(`
   CREATE TABLE IF NOT EXISTS quiz_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +182,7 @@ db.exec(`
   )
 `)
 addColumnIfMissing('vocabulary', 'folder_id', 'INTEGER')
+addColumnIfMissing('vocabulary', 'ipa', 'TEXT')
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS quiz_attempts (

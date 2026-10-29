@@ -1,7 +1,7 @@
 export function summarizeTopicFocusEvents(events, maxPerFocus = 20) {
   const byTopic = new Map()
   for (const event of events || []) {
-    if (event?.source === 'chat') continue
+    if (event?.source === 'chat' || event?.source === 'assessment') continue
     const focus = String(event?.focus || '').trim().slice(0, 80)
     const skill = String(event?.skill || '').trim()
     if (!focus || !skill) continue
