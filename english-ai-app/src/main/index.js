@@ -11,7 +11,7 @@ import { formatEnglishKnowledge } from './englishKnowledge.js'
 import { summarizeTopicFocusEvents } from './topicProgress.mjs'
 import { hasActionablePracticePrompt, isLearnerStuck, isVoiceStructureReset, makeVoiceStructureRedirect, makeVoiceStructureSameScenePrompt, needsVoiceStructureRedirect } from './voiceStructure.mjs'
 import { isValidConversationReply } from './voiceTurnReview.mjs'
-import { orderListeningQuestions } from './listeningOrder.mjs'
+import { containsVietnameseText, normalizeListeningQuestionText, validateAndOrderListeningQuestions } from './listeningOrder.mjs'
 import { assessmentStructureIds, summarizeAssessmentFocuses } from './assessmentFocus.mjs'
 import { selectFocusedQuestions } from './focusedQuiz.mjs'
 import { advanceA1AssessmentRank } from './assessmentRank.mjs'
@@ -1131,7 +1131,10 @@ app.whenReady().then(() => {
       }
     } catch (error) {
       logError('speech-synthesis-local', error)
-      return { success: false, error: localSpeechSynthesizer ? 'LOCAL_TTS_FAILED' : 'LOCAL_TTS_MODEL_FAILED' }
+      if (localSpeechSynthesizer) return { success: false, error: 'LOCAL_TTS_FAILED' }
+      const cause = String(error?.message || '')
+      const downloadFailed = /download|fetch|network|offline|http|internet|cache miss/i.test(cause)
+      return { success: false, error: downloadFailed ? 'LOCAL_TTS_MODEL_DOWNLOAD_FAILED' : 'LOCAL_TTS_MODEL_FAILED' }
     }
   })
     ipcMain.handle('assess-placement', async (event, { targetLanguage, answer }) => {
@@ -1277,6 +1280,7 @@ ${cleanText(voiceScenarioPrompt, 1200)}
       const voiceGrammarRules = grammarTitle ? `
 CHẾ ĐỘ LUYỆN NÓI MẪU CÂU (ưu tiên cao nhất trong phiên này):
 - Mẫu cần luyện: ${grammarTitle}. Công thức: ${grammarFormula}. Cách dùng: ${grammarUse}. Ví dụ: ${grammarExample}.
+- Cách viết số bằng chữ số và bằng từ đều đúng nếu có cùng giá trị (ví dụ "10 minutes" và "ten minutes"); không sửa hoặc yêu cầu nói lại chỉ vì hai cách viết này khác nhau.
 - Bạn là người hướng dẫn chủ động. Hãy tạo bối cảnh cụ thể (ai đang ở đâu, cần làm gì), đóng vai người đối thoại và dẫn người học từng bước. Đừng chỉ khen hoặc thông báo “hãy thử tình huống mới” rồi dừng.
 - Đây là phiên đang tiếp diễn: đọc câu mở đầu và các lượt gần đây trong lịch sử trước khi đáp. Giữ vai và tình huống hiện tại cho tới khi đã luyện 1–2 lượt; khi đổi cảnh, nối từ câu trước một cách tự nhiên.
 - Nếu người học chen vào bằng “Hello”, “Hi” hoặc một từ lạ, đáp xã giao ngắn nếu cần rồi dẫn họ trở lại nhiệm vụ đang dở. Không mở đầu lại bài, không nói lặp một lời thoại cũ, không suy đoán rằng họ là học sinh hay đang làm gì nếu họ chưa nói.
@@ -1317,6 +1321,10 @@ QUY TẮC VỀ NGÔN NGỮ CỦA HỌC VIÊN (bắt buộc):
 - CHỈ ghi lỗi (mảng "mistakes") cho phần học viên viết bằng ${targetLanguage}.
 - Nếu học viên viết bằng ${nativeLanguage} (hoặc bất kỳ ngôn ngữ nào khác ${targetLanguage}), TUYỆT ĐỐI KHÔNG coi đó là lỗi: để "mistakes" rỗng. Thay vào đó, trong "reply" hãy gợi ý cách nói ý đó bằng ${targetLanguage} (một câu mẫu in đậm), rồi mời học viên thử nói lại bằng ${targetLanguage}.
 - Không bao giờ sửa ngữ pháp của ${nativeLanguage}.
+
+QUY TẮC KIỂM TRA CÁCH VIẾT SỐ:
+- Chữ số và số viết bằng chữ có cùng giá trị được xem là tương đương, không phải lỗi. Ví dụ "10 minutes" và "ten minutes" đều đúng; không đổi câu của học viên từ dạng này sang dạng kia, không nói "Did you mean", và không ghi nhận lỗi chỉ vì cách viết số khác nhau.
+- Chỉ sửa câu nếu có lỗi thực sự về ngữ pháp, từ vựng hoặc ý nghĩa; giữ nguyên cách viết số của học viên.
 
 QUY TẮC TRÌNH BÀY "reply" (bắt buộc, để dễ đọc):
 - Chia thành các đoạn ngắn, mỗi đoạn tối đa 1-2 câu, ngăn cách bằng ký tự xuống dòng. Trong JSON hãy viết đúng chuỗi \\n, KHÔNG xuống dòng thật bên trong chuỗi.
@@ -1643,6 +1651,17 @@ Quy tắc: Trả về chính xác một mục cho MỖI số #. Bạn chỉ ki�
         .filter((turn) => turn.text)
       const learnerTurns = safeTurns.filter((turn) => turn.role === 'Learner')
       if (!learnerTurns.length) return { success: false, error: 'Chưa có câu trả lời của bạn trong phiên này.' }
+      const assessmentItems = []
+      if (assessment) {
+        let question = ''
+        for (const turn of safeTurns) {
+          if (turn.role === 'AI partner') question = turn.text
+          else assessmentItems.push({ question, answer: turn.text })
+        }
+        if (assessmentItems.length !== 3 || assessmentItems.some((item) => !item.question)) {
+          return { success: false, error: 'Bài đánh giá cần có đủ ba câu hỏi và câu trả lời.' }
+        }
+      }
 
       const prompt = `Bạn là chuyên gia phản hồi kỹ năng nói tiếng Anh. Đánh giá một phiên hội thoại đã kết thúc và trả lời hoàn toàn bằng JSON hợp lệ, không có markdown.
 
@@ -1659,14 +1678,18 @@ Nguyên tắc:
 - Giọng điệu khích lệ nhưng cụ thể, tránh chấm điểm số giả hoặc lời khen chung chung.
 - Đề xuất một bài luyện ngắn có thể áp dụng ở phiên sau.
 - Chấm điểm tham khảo 0-5 cho grammar, naturalness, fluency và interaction dựa trên transcript; đây là ước lượng ngôn ngữ, không phải chấm âm thanh.
+${assessment ? `- Đây là bài kiểm tra gồm đúng 3 câu. Đánh giá TỪNG câu riêng, không gộp nhận xét: mỗi questionFeedback phải nhận xét đúng câu hỏi và câu trả lời tương ứng, nêu điểm tốt và điều cần cải thiện cụ thể; chỉ ghi lỗi xuất hiện trong chính câu trả lời đó, tối đa 2 lỗi mỗi câu. Chấm điểm riêng câu đó từ 0 đến 100 dựa trên câu trả lời và trình độ ${cleanText(cefrLevel, 8)}. Không suy diễn lỗi từ các câu khác.
+- Danh sách câu hỏi và câu trả lời theo thứ tự: ${assessmentItems.map((item, index) => `Câu ${index + 1}: ${item.question}\nTrả lời: ${item.answer}`).join('\n')}` : ''}
 
 Định dạng:
-{"summary":"nhận xét tổng quát ngắn bằng tiếng mẹ đẻ","strength":"điểm làm tốt cụ thể","naturalness":"nhận xét cách diễn đạt tự nhiên hay còn cứng","fluency":"nhận xét độ liền mạch và từ đệm có bằng chứng","scores":{"grammar":0,"naturalness":0,"fluency":0,"interaction":0},"grammarErrors":[{"said":"câu/cụm người học đã nói","better":"cách nói tự nhiên/chính xác hơn","why":"giải thích ngắn"}],"nextPractice":"một hoạt động luyện tập ngắn","limits":"một câu nêu rõ đây là đánh giá transcript, không chấm phát âm/ngữ điệu"}`
+${assessment
+    ? '{"summary":"nhận xét tổng quát ngắn bằng tiếng mẹ đẻ","strength":"điểm làm tốt cụ thể","naturalness":"nhận xét cách diễn đạt tự nhiên hay còn cứng","fluency":"nhận xét độ liền mạch và từ đệm có bằng chứng","scores":{"grammar":0,"naturalness":0,"fluency":0,"interaction":0},"questionFeedback":[{"questionIndex":1,"score":0,"feedback":"nhận xét riêng câu 1 bằng tiếng mẹ đẻ, có điểm tốt và điều cần cải thiện cụ thể","grammarErrors":[{"said":"cụm sai trong câu trả lời này","better":"cách sửa","why":"giải thích ngắn"}]},{"questionIndex":2,"score":0,"feedback":"nhận xét riêng câu 2","grammarErrors":[]},{"questionIndex":3,"score":0,"feedback":"nhận xét riêng câu 3","grammarErrors":[]}],"grammarErrors":[{"said":"câu/cụm người học đã nói","better":"cách nói tự nhiên/chính xác hơn","why":"giải thích ngắn"}],"nextPractice":"một hoạt động luyện tập ngắn","limits":"một câu nêu rõ đây là đánh giá transcript, không chấm phát âm/ngữ điệu"}'
+    : '{"summary":"nhận xét tổng quát ngắn bằng tiếng mẹ đẻ","strength":"điểm làm tốt cụ thể","naturalness":"nhận xét cách diễn đạt tự nhiên hay còn cứng","fluency":"nhận xét độ liền mạch và từ đệm có bằng chứng","scores":{"grammar":0,"naturalness":0,"fluency":0,"interaction":0},"grammarErrors":[{"said":"câu/cụm người học đã nói","better":"cách nói tự nhiên/chính xác hơn","why":"giải thích ngắn"}],"nextPractice":"một hoạt động luyện tập ngắn","limits":"một câu nêu rõ đây là đánh giá transcript, không chấm phát âm/ngữ điệu"}'}`
 
       const response = await generateWithRetry({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         temperature: 0.2,
-        maxTokens: 1100
+        maxTokens: assessment ? 1800 : 1100
       })
       const raw = String(response?.text || '').replace(/```json|```/g, '').trim()
       const start = raw.indexOf('{')
@@ -1688,6 +1711,29 @@ Nguyên tắc:
             better: cleanText(item?.better, 240),
             why: cleanText(item?.why, 300)
           })).filter((item) => item.said || item.better),
+          ...(assessment ? {
+            questionFeedback: (() => {
+              const items = Array.isArray(parsedFeedback.questionFeedback) ? parsedFeedback.questionFeedback : []
+              if (items.length !== 3 || items.some((item, index) => Number(item?.questionIndex) !== index + 1)) {
+                throw new Error('Speaking assessment question feedback incomplete')
+              }
+              return items.map((item) => {
+                const score = Number(item.score)
+                const feedback = cleanText(item.feedback, 500)
+                if (!Number.isFinite(score) || !feedback) throw new Error(`Missing speaking assessment feedback for question ${item.questionIndex}`)
+                return {
+                  questionIndex: Number(item.questionIndex),
+                  score: Math.max(0, Math.min(100, Math.round(score))),
+                  feedback,
+                  grammarErrors: (Array.isArray(item.grammarErrors) ? item.grammarErrors : []).slice(0, 2).map((error) => ({
+                    said: cleanText(error?.said, 240),
+                    better: cleanText(error?.better, 240),
+                    why: cleanText(error?.why, 300)
+                  })).filter((error) => error.said && error.better)
+                }
+              })
+            })()
+          } : {}),
           nextPractice: cleanText(parsedFeedback.nextPractice, 400),
           limits: cleanText(parsedFeedback.limits, 300) || 'Đánh giá dựa trên transcript; chưa chấm phát âm và ngữ điệu.'
         }
@@ -1782,7 +1828,10 @@ Trả về CHỈ JSON hợp lệ theo mẫu: {"overall":0,"summary":"","criteria
     } catch (error) {
       console.error('Writing evaluation error:', error)
       logError('writing-evaluation', error)
-      return { success: false, error: 'Chưa đánh giá được bài viết. Hãy thử lại sau.' }
+      const errorMessage = [502, 503, 504].includes(error?.status)
+        ? 'Dịch vụ AI đang tạm thời không phản hồi. Bài viết chưa được đánh giá hoặc lưu; hãy chờ một chút rồi nộp lại.'
+        : 'Chưa đánh giá được bài viết. Bài viết chưa được lưu; hãy thử lại sau.'
+      return { success: false, error: errorMessage }
     }
   })
 
@@ -2489,53 +2538,138 @@ Quy tắc:
   ipcMain.handle('generate-listening-lesson', async (event, { targetLanguage, nativeLanguage, cefrLevel, topic }) => {
     try {
       const topics = { daily: 'sinh hoạt hằng ngày', travel: 'du lịch và di chuyển', work: 'công việc và học tập', shopping: 'mua sắm và dịch vụ' }
+      const promptTopics = { daily: 'daily life', travel: 'travel and transportation', work: 'work and study', shopping: 'shopping and services' }
       const selectedTopic = topics[topic] ? topic : 'daily'
       const level = LEVELS.includes(cefrLevel) ? cefrLevel : 'A1'
+      const languageNames = {
+        'tiếng anh': 'English',
+        'tiếng pháp': 'French',
+        'tiếng nhật': 'Japanese',
+        'tiếng hàn': 'Korean',
+        'tiếng trung': 'Chinese',
+        'tiếng đức': 'German',
+        'tiếng tây ban nha': 'Spanish',
+        english: 'English',
+        french: 'French',
+        japanese: 'Japanese',
+        korean: 'Korean',
+        chinese: 'Chinese',
+        german: 'German',
+        spanish: 'Spanish'
+      }
+      const targetLanguageName = languageNames[String(targetLanguage || '').trim().toLocaleLowerCase()] || cleanText(targetLanguage, 40)
+      const nativeLanguageName = languageNames[String(nativeLanguage || '').trim().toLocaleLowerCase()] || cleanText(nativeLanguage, 40)
       const sections = []
       for (let sectionIndex = 0; sectionIndex < 2; sectionIndex++) {
         let section = null
+        let validationIssue = ''
         for (let attempt = 0; attempt < 3 && !section; attempt++) {
-        const response = await generateWithRetry({
-          maxTokens: 3500,
-          temperature: 0.7,
-          contents: `Tạo ĐOẠN ${sectionIndex + 1} trong bài luyện NGHE ${targetLanguage} cho người học mức CEFR ${level}, tiếng mẹ đẻ ${nativeLanguage}. Chủ đề: ${topics[selectedTopic]}. Hai đoạn của bài phải khác tình huống: đoạn 1 là trao đổi thông tin đời thường, đoạn 2 là lập kế hoạch hoặc giải quyết một vấn đề. Lấy cảm hứng từ sự đa dạng dạng câu hỏi IELTS Listening nhưng độ khó vẫn đúng CEFR ${level}; đây không phải đề IELTS chính thức. Viết hội thoại tự nhiên giữa đúng hai người, 70–110 từ ở A1/A2 hoặc 110–160 từ ở mức cao hơn. Trả về turns gồm 6–10 lượt; speaker chỉ là "A" hoặc "B", có cả hai người, text là lời nói thuần để tổng hợp giọng (không ghi nhãn người nói, chỉ dẫn sân khấu hoặc markdown trong text). Tổng lời nói tối đa 1400 ký tự.
-Tạo đúng 5 câu, mỗi dạng một câu: multiple_choice, matching, note_completion, short_answer, sentence_completion. Sắp xếp câu theo ĐÚNG thứ tự thông tin xuất hiện trong lời thoại, không xếp theo dạng câu. Mỗi câu phải có evidence là một cụm lời nói nguyên văn, liên tục, ngắn, duy nhất trong turns, chứa chi tiết dẫn đến đáp án. Evidence của các câu phải đi từ đầu đến cuối audio và không chồng lấn. Đáp án câu điền/trả lời ngắn phải xuất hiện nguyên văn trong evidence. Không hỏi mẹo ngữ pháp. multiple_choice và matching phải có đúng 4 options khác nhau và answer khớp nguyên văn một option. Ba câu điền/trả lời ngắn phải có options là mảng rỗng, answer ngắn và xuất hiện rõ trong lời thoại; có thể thêm acceptedAnswers cho biến thể viết hợp lệ. note_completion và sentence_completion phải có dấu ____. Câu hỏi và lựa chọn bằng ${targetLanguage}; giải thích bằng ${nativeLanguage}. Tránh hai câu hỏi cùng kiểm tra một chi tiết. Chỉ trả JSON hợp lệ: {"title":"...","turns":[{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}],"questions":[{"type":"multiple_choice","question":"...","options":["...","...","...","..."],"answer":"...","acceptedAnswers":[],"evidence":"exact words from audio","explanation":"..."}]}`
-        })
-        let parsed
-        try { parsed = JSON.parse(String(response.text || '').replace(/```(?:json)?|```/g, '').trim()) } catch { continue }
-        const title = cleanText(parsed?.title, 100)
-        const turns = Array.isArray(parsed?.turns) ? parsed.turns.map((turn) => ({ speaker: turn?.speaker, text: cleanText(turn?.text, 300) })) : []
-        const transcript = turns.map((turn) => turn.text).join(' ')
-        const types = ['multiple_choice', 'matching', 'note_completion', 'short_answer', 'sentence_completion']
-        const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : []
-        const questions = rawQuestions.map((question, index) => {
-          const type = question?.type
-          if (!types.includes(type)) return null
-          const text = cleanText(question.question, 250)
-          const explanation = cleanText(question.explanation, 350)
-          const evidence = cleanText(question.evidence, 240)
-          if (!text || !explanation) return null
-          if (type === 'multiple_choice' || type === 'matching') {
-            const options = Array.isArray(question.options) ? question.options.map((option) => cleanText(option, 100)) : []
-            if (options.length !== 4 || options.some((option) => !option) || new Set(options.map((option) => option.toLowerCase())).size !== 4) return null
-            const answerText = cleanText(question.answer, 100)
-            const correctOption = options.find((option) => option.toLowerCase() === answerText.toLowerCase())
-            if (!correctOption) return null
-            const mixed = shuffle(options)
-            return { type, question: text, options: mixed, answer: mixed.indexOf(correctOption), evidence, explanation }
+          const retryInstruction = validationIssue
+            ? `\nLẦN TRƯỚC BỊ TỪ CHỐI VÌ: ${validationIssue}. Hãy sửa đúng lỗi này trong JSON mới; kiểm tra lại toàn bộ định dạng và bằng chứng trước khi trả lời.`
+            : ''
+          const response = await generateWithRetry({
+            maxTokens: 3500,
+            temperature: attempt === 0 ? 0.7 : 0.4,
+            contents: `Create section ${sectionIndex + 1} of a ${targetLanguageName} listening lesson for a CEFR ${level} learner whose native language is ${nativeLanguageName}. Topic: ${promptTopics[selectedTopic]}. The two sections must use different situations: section 1 is an everyday exchange, section 2 is making a plan or solving a problem. Write a natural dialogue between exactly two people, 70–110 words at A1/A2 or 110–160 words at higher levels. Return 6–10 turns; speaker must be "A" or "B", both speakers must appear, and text must be clean speech for audio synthesis with no speaker labels, stage directions, or markdown. Keep the spoken dialogue under 1400 characters.
+MANDATORY LANGUAGE RULE: The learner is studying ${targetLanguageName}. The title, every dialogue turn, every question, every option, every answer, every accepted answer, and every evidence quote MUST be written in ${targetLanguageName}, not ${nativeLanguageName}. Translate the topic into ${targetLanguageName} when writing the dialogue. Only the explanation field may use ${nativeLanguageName}. Never write Vietnamese learner-facing content unless ${targetLanguageName} is Vietnamese.
+Create exactly 5 questions, one each of these types: multiple_choice, matching, note_completion, short_answer, sentence_completion. Order them by where their evidence appears in the dialogue. Each evidence must be a short, unique, continuous quote from the dialogue that supports its answer. Evidence quotes must appear from beginning to end and must not overlap. Answers to fill-in and short-answer questions must appear in their evidence. Do not test grammar. multiple_choice and matching must have exactly four distinct options and the answer must exactly match one option. Fill-in questions must have empty options and short answers; acceptedAnswers may contain valid spelling variants. note_completion and sentence_completion MUST be complete questions with the answer replaced by exactly ____; e.g., answer "Friday" means question "They will meet on ____." Explanations must be in ${nativeLanguageName}. Avoid asking about the same detail twice.${retryInstruction}
+Return only valid JSON: {"title":"...","turns":[{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}],"questions":[{"type":"multiple_choice","question":"...","options":["...","...","...","..."],"answer":"...","acceptedAnswers":[],"evidence":"exact words from audio","explanation":"..."}]}`
+          })
+          let parsed
+          try {
+            parsed = JSON.parse(String(response.text || '').replace(/```(?:json)?|```/g, '').trim())
+          } catch {
+            validationIssue = 'the response was not valid JSON'
+            continue
           }
-          const answer = cleanText(question.answer, 80)
-          if (!answer || answer.split(/\s+/).length > (type === 'short_answer' ? 3 : 2)) return null
-          if (type !== 'short_answer' && !text.includes('____')) return null
-          const acceptedAnswers = Array.isArray(question.acceptedAnswers) ? question.acceptedAnswers.map((item) => cleanText(item, 80)).filter(Boolean).slice(0, 4) : []
-          return { type, question: text, options: [], answer, acceptedAnswers, evidence, explanation }
-        })
-        const orderedQuestions = questions.every(Boolean) ? orderListeningQuestions(transcript, questions, types) : null
-        if (title && turns.length >= 4 && turns.length <= 12 && turns.every((turn) => ['A', 'B'].includes(turn.speaker) && turn.text) && new Set(turns.map((turn) => turn.speaker)).size === 2 && transcript.length >= 80 && transcript.length <= 1400 && rawQuestions.length === 5 && orderedQuestions) {
-          section = { title, transcript, turns, questions: orderedQuestions }
+          const title = cleanText(parsed?.title, 100)
+          const turns = Array.isArray(parsed?.turns) ? parsed.turns.map((turn) => ({ speaker: turn?.speaker, text: cleanText(turn?.text, 300) })) : []
+          const transcript = turns.map((turn) => turn.text).join(' ')
+          const types = ['multiple_choice', 'matching', 'note_completion', 'short_answer', 'sentence_completion']
+          const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : []
+          if (targetLanguageName === 'English') {
+            const learnerFacingText = [
+              title,
+              ...turns.map((turn) => turn.text),
+              ...rawQuestions.flatMap((question) => [
+                question?.question,
+                question?.answer,
+                question?.evidence,
+                ...(Array.isArray(question?.options) ? question.options : []),
+                ...(Array.isArray(question?.acceptedAnswers) ? question.acceptedAnswers : [])
+              ])
+            ].join(' ')
+            if (containsVietnameseText(learnerFacingText)) {
+              validationIssue = 'learner-facing content must be in English, not Vietnamese'
+              continue
+            }
+          }
+          let questionIssue = ''
+          const questions = rawQuestions.map((question) => {
+            const type = question?.type
+            if (!types.includes(type)) {
+              questionIssue ||= 'a question has an unsupported type'
+              return null
+            }
+            const answer = cleanText(question.answer, 100)
+            let text = cleanText(question.question, 250)
+            const explanation = cleanText(question.explanation, 350)
+            const evidence = cleanText(question.evidence, 240)
+            if (!text || !explanation) {
+              questionIssue ||= 'a question is missing its text or explanation'
+              return null
+            }
+            if (type === 'multiple_choice' || type === 'matching') {
+              const options = Array.isArray(question.options) ? question.options.map((option) => cleanText(option, 100)) : []
+              if (options.length !== 4 || options.some((option) => !option) || new Set(options.map((option) => option.toLowerCase())).size !== 4) {
+                questionIssue ||= `${type} must have four distinct options`
+                return null
+              }
+              const correctOption = options.find((option) => option.toLowerCase() === answer.toLowerCase())
+              if (!correctOption) {
+                questionIssue ||= `${type} answer must exactly match one option`
+                return null
+              }
+              const mixed = shuffle(options)
+              return { type, question: text, options: mixed, answer: mixed.indexOf(correctOption), evidence, explanation }
+            }
+            if (!answer || answer.split(/\s+/).length > (type === 'short_answer' ? 3 : 2)) {
+              questionIssue ||= `${type} answer must be short and present in the audio`
+              return null
+            }
+            if (type !== 'short_answer') {
+              text = normalizeListeningQuestionText(type, text, answer)
+              if (!text) {
+                questionIssue ||= `${type} must contain a blank, or include its answer so the blank can be inserted`
+                return null
+              }
+            }
+            const acceptedAnswers = Array.isArray(question.acceptedAnswers) ? question.acceptedAnswers.map((item) => cleanText(item, 80)).filter(Boolean).slice(0, 4) : []
+            return { type, question: text, options: [], answer, acceptedAnswers, evidence, explanation }
+          })
+          if (questionIssue) {
+            validationIssue = questionIssue
+            continue
+          }
+          const validation = questions.every(Boolean)
+            ? validateAndOrderListeningQuestions(transcript, questions, types)
+            : { questions: null, error: 'one or more questions are missing' }
+          if (!validation.questions) {
+            validationIssue = validation.error
+            continue
+          }
+          const orderedQuestions = validation.questions
+          if (!title) validationIssue = 'the section title is missing'
+          else if (turns.length < 4 || turns.length > 12) validationIssue = 'the dialogue must contain 4 to 12 turns'
+          else if (!turns.every((turn) => ['A', 'B'].includes(turn.speaker) && turn.text) || new Set(turns.map((turn) => turn.speaker)).size !== 2) validationIssue = 'the dialogue must use both speakers A and B'
+          else if (transcript.length < 80 || transcript.length > 1400) validationIssue = 'the dialogue length must be 80 to 1400 characters'
+          else if (rawQuestions.length !== 5) validationIssue = 'the section must contain exactly five questions'
+          else section = { title, transcript, turns, questions: orderedQuestions }
         }
+        if (!section) {
+          logError('listening-lesson-validation', `Section ${sectionIndex + 1} rejected after 3 attempts: ${validationIssue}`)
+          return { success: false, message: 'AI chưa tạo được đoạn nghe đúng định dạng sau 3 lần thử. Hãy bấm thử lại.' }
         }
-        if (!section) return { success: false, message: 'Chưa tạo được hai đoạn nghe phù hợp. Hãy thử lại.' }
         sections.push(section)
       }
       return { success: true, lesson: { title: `Bài nghe: ${topics[selectedTopic]}`, sections, level, topic: selectedTopic } }
@@ -2547,57 +2681,142 @@ Tạo đúng 5 câu, mỗi dạng một câu: multiple_choice, matching, note_co
 
   ipcMain.handle('generate-listening-assessment', async (_event, { targetLanguage, nativeLanguage, cefrLevel }) => {
     const level = LEVELS.includes(cefrLevel) ? cefrLevel : 'A1'
+    const languageNames = {
+      'tiếng anh': 'English',
+      'tiếng pháp': 'French',
+      'tiếng nhật': 'Japanese',
+      'tiếng hàn': 'Korean',
+      'tiếng trung': 'Chinese',
+      'tiếng đức': 'German',
+      'tiếng tây ban nha': 'Spanish',
+      english: 'English',
+      french: 'French',
+      japanese: 'Japanese',
+      korean: 'Korean',
+      chinese: 'Chinese',
+      german: 'German',
+      spanish: 'Spanish'
+    }
+    const targetLanguageName = languageNames[String(targetLanguage || '').trim().toLocaleLowerCase()] || cleanText(targetLanguage, 40)
+    const nativeLanguageName = languageNames[String(nativeLanguage || '').trim().toLocaleLowerCase()] || cleanText(nativeLanguage, 40)
     const blueprints = [
-      { kind: 'monologue', label: 'Độc thoại', count: 7, speakers: ['A'], context: 'một người kể hoặc trình bày thông tin có trình tự, tự nhiên như một thông báo hay trải nghiệm' },
-      { kind: 'dialogue', label: 'Hội thoại', count: 7, speakers: ['A', 'B'], context: 'hai người trao đổi và làm rõ thông tin, có câu hỏi, phản hồi và một thay đổi kế hoạch' },
-      { kind: 'instructions', label: 'Chỉ dẫn', count: 6, speakers: ['A'], context: 'một người hướng dẫn cách làm một việc hoặc chỉ đường theo các bước rõ ràng' }
+      { kind: 'monologue', label: 'Độc thoại', count: 5, speakers: ['A'], context: 'one person tells an ordered everyday story or gives information, like an announcement or personal experience' },
+      { kind: 'dialogue', label: 'Hội thoại', count: 5, speakers: ['A', 'B'], context: 'two people exchange information and clarify details, with questions, responses, and a change of plan' },
+      { kind: 'instructions', label: 'Chỉ dẫn', count: 5, speakers: ['A'], context: 'one person gives clear step-by-step instructions or directions' }
     ]
-    const pattern = ['multiple_choice', 'matching', 'note_completion', 'short_answer', 'sentence_completion', 'multiple_choice', 'note_completion']
+    const pattern = ['multiple_choice', 'matching', 'note_completion', 'short_answer', 'sentence_completion']
     try {
       const sections = []
       for (const blueprint of blueprints) {
         let section = null
+        let validationIssue = ''
         for (let attempt = 0; attempt < 3 && !section; attempt++) {
-          const expectedTypes = pattern.slice(0, blueprint.count)
-          const response = await generateWithRetry({
-            maxTokens: 5000,
-            temperature: 0.55,
-            contents: `Tạo một đoạn NGHE ${targetLanguage} cho bài ĐÁNH GIÁ TỔNG QUÁT kỹ năng nghe ở mức CEFR ${level}, tiếng mẹ đẻ ${nativeLanguage}. Dạng: ${blueprint.label}; bối cảnh: ${blueprint.context}. Không lặp lại các chủ đề đã tạo trong đề này: ${sections.map((item) => item.title).join('; ') || 'chưa có'}. Lời nói phù hợp ${level}, dài khoảng ${level === 'A1' || level === 'A2' ? '100–160' : '160–240'} từ, tối đa 2200 ký tự. Trả về turns: ${blueprint.speakers.length === 1 ? 'đúng 1 lượt speaker "A"' : '6–12 lượt luân phiên speaker "A" và "B" có đủ cả hai người'}. Text chỉ là lời để đọc thành tiếng; không chứa nhãn vai hay chỉ dẫn sân khấu.
-Tạo ĐÚNG ${blueprint.count} câu hỏi kiểm tra các chi tiết KHÁC NHAU trong audio. Số lượng từng dạng phải khớp danh sách này: ${expectedTypes.join(', ')}. Sắp xếp câu theo ĐÚNG thứ tự thông tin xuất hiện trong lời nói, không xếp theo dạng câu. Mỗi câu có evidence là một cụm lời nói nguyên văn, liên tục, ngắn và duy nhất trong turns, chứa chi tiết dẫn đến đáp án; các evidence phải đi từ đầu đến cuối audio và không chồng lấn. Đáp án câu điền/trả lời ngắn phải xuất hiện nguyên văn trong evidence. multiple_choice và matching có đúng 4 options khác nhau, answer khớp nguyên văn một option. Các dạng còn lại có options rỗng; answer tối đa 3 từ và có thể thêm acceptedAnswers. note_completion và sentence_completion phải chứa ____ trong question. Câu hỏi/options bằng ${targetLanguage}; explanation bằng ${nativeLanguage}. Không hỏi mẹo ngữ pháp. Chỉ trả JSON: {"title":"...","turns":[{"speaker":"A","text":"..."}],"questions":[{"type":"multiple_choice","question":"...","options":["..."],"answer":"...","acceptedAnswers":[],"evidence":"exact words from audio","explanation":"..."}]}`
+          const retryInstruction = validationIssue
+            ? `\nThe previous response was rejected because ${validationIssue}. Generate a fresh complete passage and all five questions. Correct this issue and check every requirement before returning new JSON.`
+            : ''
+          const response = await generateWithVllm({
+            maxTokens: 3500,
+            temperature: attempt === 0 ? 0.7 : 0.4,
+            contents: `Create one ${targetLanguageName} listening assessment section at CEFR ${level} for a learner whose native language is ${nativeLanguageName}. Passage type: ${blueprint.kind}; scenario: ${blueprint.context}. Make this situation distinct from completed sections: ${sections.map((item) => item.title).join('; ') || 'none yet'}. Write a natural audio passage of about ${level === 'A1' || level === 'A2' ? '100–160' : '110–160'} words and under 1400 characters. Return turns: ${blueprint.speakers.length === 1 ? 'exactly one turn with speaker "A"' : '6–10 turns using both speakers "A" and "B"'}. Speaker must be one of ${blueprint.speakers.map((speaker) => `"${speaker}"`).join(' and ')}. Text must be clean speech for audio synthesis with no speaker labels or stage directions.
+MANDATORY LANGUAGE RULE: The title, every dialogue turn, every question, every option, every answer, every accepted answer, and every evidence quote MUST be in ${targetLanguageName}, not ${nativeLanguageName}. Only explanations may be in ${nativeLanguageName}. Do not include Vietnamese learner-facing content unless ${targetLanguageName} is Vietnamese.
+Create exactly five questions, one each of these types in this order: multiple_choice, matching, note_completion, short_answer, sentence_completion. Order them by where their evidence appears in the passage. Each evidence must be a short, unique, continuous exact quote from the passage that supports its answer. Evidence quotes must appear from beginning to end and must not overlap. Answers for note_completion, short_answer, and sentence_completion must appear in their evidence. Do not test grammar. multiple_choice and matching must have exactly four distinct options and answer must exactly match one option. Fill-in questions must have empty options; short_answer answers must be at most 3 words, and note_completion/sentence_completion answers at most 2 words. For completion questions, put the missing word(s) in the "answer" field and put ____ only in the question text; never leave answer empty or put ____ in answer. Example: {"type":"note_completion","question":"The meeting is on ____.","answer":"Friday","options":[],"acceptedAnswers":[],"evidence":"the meeting is on Friday","explanation":"..."} acceptedAnswers may contain valid alternatives. note_completion and sentence_completion MUST be complete questions with the answer replaced by exactly ____. Explanations must be in ${nativeLanguageName}. Avoid asking about the same detail twice.${retryInstruction}
+Return only valid JSON: {"title":"...","turns":[{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}],"questions":[{"type":"multiple_choice","question":"...","options":["...","...","...","..."],"answer":"...","acceptedAnswers":[],"evidence":"exact words from audio","explanation":"..."}]}`
           })
           let parsed
-          try { parsed = JSON.parse(String(response.text || '').replace(/```(?:json)?|```/g, '').trim()) } catch { continue }
+          try {
+            parsed = JSON.parse(String(response.text || '').replace(/```(?:json)?|```/g, '').trim())
+          } catch {
+            validationIssue = 'the response was not valid JSON'
+            continue
+          }
           const title = cleanText(parsed?.title, 100)
-          const turns = Array.isArray(parsed?.turns) ? parsed.turns.map((turn) => ({ speaker: turn?.speaker, text: cleanText(turn?.text, 2200) })) : []
+          const turns = Array.isArray(parsed?.turns) ? parsed.turns.map((turn) => ({ speaker: turn?.speaker, text: cleanText(turn?.text, blueprint.speakers.length === 1 ? 2200 : 300) })) : []
           const transcript = turns.map((turn) => turn.text).join(' ')
           const rawQuestions = Array.isArray(parsed?.questions) ? parsed.questions : []
+          if (targetLanguageName === 'English') {
+            const learnerFacingText = [
+              title,
+              ...turns.map((turn) => turn.text),
+              ...rawQuestions.flatMap((question) => [
+                question?.question,
+                question?.answer,
+                question?.evidence,
+                ...(Array.isArray(question?.options) ? question.options : []),
+                ...(Array.isArray(question?.acceptedAnswers) ? question.acceptedAnswers : [])
+              ])
+            ].join(' ')
+            if (containsVietnameseText(learnerFacingText)) {
+              validationIssue = 'learner-facing content must be in English, not Vietnamese'
+              continue
+            }
+          }
+          let questionIssue = ''
           const questions = rawQuestions.map((question) => {
             const type = question?.type
-            if (!expectedTypes.includes(type)) return null
-            const text = cleanText(question.question, 250)
+            if (!pattern.includes(type)) {
+              questionIssue ||= 'a question has an unsupported type'
+              return null
+            }
+            let text = cleanText(question.question, 250)
             const explanation = cleanText(question.explanation, 350)
             const evidence = cleanText(question.evidence, 240)
-            if (!text || !explanation) return null
+            if (!text || !explanation) {
+              questionIssue ||= 'a question is missing its text or explanation'
+              return null
+            }
             if (type === 'multiple_choice' || type === 'matching') {
               const options = Array.isArray(question.options) ? question.options.map((option) => cleanText(option, 100)) : []
-              if (options.length !== 4 || options.some((option) => !option) || new Set(options.map((option) => option.toLowerCase())).size !== 4) return null
+              if (options.length !== 4 || options.some((option) => !option) || new Set(options.map((option) => option.toLowerCase())).size !== 4) {
+                questionIssue ||= `${type} must have four distinct options`
+                return null
+              }
               const correctOption = options.find((option) => option.toLowerCase() === cleanText(question.answer, 100).toLowerCase())
-              if (!correctOption) return null
+              if (!correctOption) {
+                questionIssue ||= `${type} answer must exactly match one option`
+                return null
+              }
               const mixed = shuffle(options)
               return { type, question: text, options: mixed, answer: mixed.indexOf(correctOption), evidence, explanation }
             }
-            const answer = cleanText(question.answer, 80)
-            if (!answer || answer.split(/\s+/).length > 3 || (type !== 'short_answer' && !text.includes('____'))) return null
+            const answer = cleanText(question.answer, 100)
+            if (!answer || answer.split(/\s+/).length > (type === 'short_answer' ? 3 : 2)) {
+              questionIssue ||= `${type} answer must be short and present in the audio`
+              return null
+            }
+            if (type !== 'short_answer') {
+              text = normalizeListeningQuestionText(type, text, answer)
+              if (!text) {
+                questionIssue ||= `${type} must contain a blank, or include its answer so the blank can be inserted`
+                return null
+              }
+            }
             const acceptedAnswers = Array.isArray(question.acceptedAnswers) ? question.acceptedAnswers.map((item) => cleanText(item, 80)).filter(Boolean).slice(0, 4) : []
             return { type, question: text, options: [], answer, acceptedAnswers, evidence, explanation }
           })
-          const orderedQuestions = questions.every(Boolean) ? orderListeningQuestions(transcript, questions, expectedTypes) : null
+          if (questionIssue) {
+            validationIssue = questionIssue
+            continue
+          }
+          const validation = questions.every(Boolean)
+            ? validateAndOrderListeningQuestions(transcript, questions, pattern)
+            : { questions: null, error: 'one or more questions are missing' }
+          if (!validation.questions) {
+            validationIssue = validation.error
+            continue
+          }
           const validTurns = blueprint.speakers.length === 1
             ? turns.length === 1 && turns[0].speaker === 'A' && Boolean(turns[0].text)
-            : turns.length >= 6 && turns.length <= 12 && turns.every((turn) => blueprint.speakers.includes(turn.speaker) && turn.text) && new Set(turns.map((turn) => turn.speaker)).size === 2
-          if (title && validTurns && transcript.length >= 180 && transcript.length <= 2200 && rawQuestions.length === blueprint.count && orderedQuestions) section = { kind: blueprint.kind, label: blueprint.label, title, transcript, turns, questions: orderedQuestions }
+            : turns.length >= 4 && turns.length <= 12 && turns.every((turn) => blueprint.speakers.includes(turn.speaker) && turn.text) && new Set(turns.map((turn) => turn.speaker)).size === 2
+          if (!title) validationIssue = 'the passage title is missing'
+          else if (!validTurns) validationIssue = 'the turns do not match the required speaker structure'
+          else if (transcript.length < 180 || transcript.length > 1400) validationIssue = 'the transcript must be 180 to 1400 characters'
+          else if (rawQuestions.length !== 5) validationIssue = 'the section must contain exactly five questions'
+          else section = { kind: blueprint.kind, label: blueprint.label, title, transcript, turns, questions: validation.questions }
         }
-        if (!section) return { success: false, message: `Chưa tạo được đoạn ${blueprint.label.toLowerCase()} phù hợp. Hãy thử lại.` }
+        if (!section) {
+          logError('listening-assessment-validation', `${blueprint.kind} rejected after 3 attempts: ${validationIssue}`)
+          return { success: false, message: `AI chưa tạo được đoạn nghe đúng định dạng sau 3 lần thử. Hãy bấm thử lại. (${validationIssue})` }
+        }
         sections.push(section)
       }
       return { success: true, lesson: { title: 'Đánh giá tổng quát kỹ năng nghe', sections, level, topic: 'assessment' } }
@@ -2611,7 +2830,7 @@ Tạo ĐÚNG ${blueprint.count} câu hỏi kiểm tra các chi tiết KHÁC NHAU
     try {
       const n = Number(total)
       const score = Number(correct)
-      if (!Number.isInteger(n) || n !== (topic === 'assessment' ? 20 : 10) || !Number.isInteger(score) || score < 0 || score > n) return { success: false }
+      if (!Number.isInteger(n) || n !== (topic === 'assessment' ? 15 : 10) || !Number.isInteger(score) || score < 0 || score > n) return { success: false }
       db.prepare('INSERT INTO listening_attempts (profile_id, level, topic, title, total, correct) VALUES (?, ?, ?, ?, ?, ?)')
         .run(profileId, LEVELS.includes(level) ? level : 'A1', cleanText(topic, 30), cleanText(title, 100), n, score)
       return { success: true }

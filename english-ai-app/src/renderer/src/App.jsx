@@ -3,6 +3,7 @@ import { chunkSpeechText, cleanRepeatedTranscript, cleanSpeechText, createAudioS
 import { matchesSpokenSentence } from './voice/answer.mjs'
 import { isListeningAnswerCorrect } from './voice/listening.mjs'
 import { selectVoiceContextHistory } from './voice/history.mjs'
+import { chooseWritingAssessmentPrompt } from './writingAssessment.mjs'
 import { normalizeFocusName, structureIdForAssessmentFocus } from '../../main/assessmentFocus.mjs'
 import { structureLessons } from './structureLessons.mjs'
 
@@ -4100,7 +4101,12 @@ function StructureScreen({ profileId, profile, cefrLevel, speechVoice, initialSt
 }
 
 function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated, assessment = false, onExit }) {
-  const [prompt, setPrompt] = useState(assessment ? 'Write about a memorable day. Explain what happened, who was involved, and why it mattered to you.' : '')
+  const [prompt, setPrompt] = useState(() => assessment
+    ? chooseWritingAssessmentPrompt(window.sessionStorage.getItem('writingAssessmentPrompt'))
+    : '')
+  useEffect(() => {
+    if (assessment && prompt) window.sessionStorage.setItem('writingAssessmentPrompt', prompt)
+  }, [assessment, prompt])
   const [promptMode, setPromptMode] = useState('random')
   const [topic, setTopic] = useState('')
   const [generatingPrompt, setGeneratingPrompt] = useState(false)
@@ -4140,7 +4146,7 @@ function WritingPracticeScreen({ profileId, profile, cefrLevel, onEvaluated, ass
   const inputStyle = { width: '100%', boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', padding: 12, font: 'inherit', lineHeight: 1.6, resize: 'vertical' }
   return <div className={`writing-practice-screen${assessment ? ' writing-assessment-screen' : ' writing-training-screen'}`}><div className="writing-practice-form">
     {onExit && <button type="button" className="listening-secondary" onClick={onExit}><Icon name="back" size={15} /> Quay lại Kiểm tra</button>}
-    <header className="writing-practice-header"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG VIẾT' : 'LUYỆN KỸ NĂNG VIẾT'}</span><h3>{assessment ? 'Đánh giá tổng quát kỹ năng viết' : 'Viết một đoạn ngắn'}</h3><p>{assessment ? 'Viết theo đề cố định. Điểm từ 4 tiêu chí sẽ được lưu vào biểu đồ Tiến bộ.' : 'Chọn đề, viết đoạn văn và nhận góp ý theo 4 tiêu chí.'}</p></header>
+    <header className="writing-practice-header"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG VIẾT' : 'LUYỆN KỸ NĂNG VIẾT'}</span><h3>{assessment ? 'Đánh giá tổng quát kỹ năng viết' : 'Viết một đoạn ngắn'}</h3><p>{assessment ? 'Đề bài thay đổi sau mỗi lần kiểm tra. Điểm từ 4 tiêu chí sẽ được lưu vào biểu đồ Tiến bộ.' : 'Chọn đề, viết đoạn văn và nhận góp ý theo 4 tiêu chí.'}</p></header>
     {assessment
       ? <div className="writing-assessment-prompt"><span>Đề bài</span><p>{prompt}</p></div>
       : <section className="writing-prompt-setup"><div className="writing-section-heading"><span>01 · CHỌN ĐỀ BÀI</span><h4>Bạn muốn viết về điều gì?</h4></div><div className="writing-prompt-modes"><button type="button" className={promptMode === 'random' ? 'active' : ''} aria-pressed={promptMode === 'random'} disabled={generatingPrompt} onClick={() => { setPromptMode('random'); setPrompt('') }}>Đề ngẫu nhiên</button><button type="button" className={promptMode === 'topic' ? 'active' : ''} aria-pressed={promptMode === 'topic'} disabled={generatingPrompt} onClick={() => { setPromptMode('topic'); setPrompt('') }}>Chọn chủ đề</button></div>{promptMode === 'topic' && <label>Chủ đề bạn muốn viết<input value={topic} onChange={(event) => { setTopic(event.target.value); setPrompt('') }} disabled={generatingPrompt} maxLength={160} placeholder="Ví dụ: chuyến du lịch gần đây" /></label>}<div className="writing-prompt-action"><button type="button" className="listening-primary" disabled={generatingPrompt || (promptMode === 'topic' && !topic.trim())} onClick={createPrompt}>{generatingPrompt ? 'Đang tạo đề…' : prompt ? 'Tạo đề khác' : 'Tạo đề bài'} <Icon name="next" size={15} /></button>{!prompt && <span>AI sẽ tạo một đề phù hợp với trình độ của bạn.</span>}</div>{prompt && <div className="writing-assessment-prompt"><span>ĐỀ BÀI CỦA BẠN</span><p>{prompt}</p></div>}</section>}
@@ -4194,7 +4200,17 @@ function SpeakingAssessmentScreen({ profileId, profile, cefrLevel, speechVoice, 
       {error && <p className="listening-error" role="alert">{error}</p>}
       <button type="button" className="listening-primary" disabled={answers.some((answer) => !answer.trim()) || busy || speechInput.listening || speechInput.transcribing} onClick={submit}>{busy ? 'Đang đánh giá…' : 'Nộp bài đánh giá nói'}</button>
     </>}
-    {feedback && <section className="speaking-assessment-result"><h3>Kết quả · {feedback.overall}/100</h3><p>{feedback.summary}</p><div>{[['grammar', 'Ngữ pháp'], ['naturalness', 'Tự nhiên'], ['fluency', 'Trôi chảy qua transcript'], ['interaction', 'Tương tác']].map(([key, label]) => <span key={key}>{label}: <strong>{feedback.scores[key]}/5</strong></span>)}</div><p>{feedback.limits}</p></section>}
+    {feedback && <section className="speaking-assessment-result">
+      <h3>Kết quả tổng quát · {feedback.overall}/100</h3>
+      <p>{feedback.summary}</p>
+      <div>{[['grammar', 'Ngữ pháp'], ['naturalness', 'Tự nhiên'], ['fluency', 'Trôi chảy qua transcript'], ['interaction', 'Tương tác']].map(([key, label]) => <span key={key}>{label}: <strong>{feedback.scores[key]}/5</strong></span>)}</div>
+      {feedback.questionFeedback?.map((item, position) => <article key={item.questionIndex} className="speaking-assessment-question-feedback">
+        <div><h4>Câu {position + 1} · {item.score}/100</h4><p><strong>Câu hỏi:</strong> {prompts[position]}</p><p><strong>Bạn đã trả lời:</strong> {answers[position]}</p></div>
+        <p>{item.feedback}</p>
+        {item.grammarErrors.length > 0 && <div><strong>Gợi ý sửa</strong>{item.grammarErrors.map((mistake, index) => <p key={`${item.questionIndex}-${index}`}><span>{mistake.said}</span> → <strong>{mistake.better}</strong>{mistake.why && <small>{mistake.why}</small>}</p>)}</div>}
+      </article>)}
+      <p>{feedback.limits}</p>
+    </section>}
   </div>
 }
 
@@ -4318,9 +4334,9 @@ function ListeningPracticeScreen({ profileId, profile, cefrLevel, speechVoice, a
   return <div className="listening-practice">
     {onExit && <button type="button" className="listening-secondary" onClick={onExit} style={{ marginBottom: 18 }}><Icon name="back" size={15} /> Quay lại Kiểm tra</button>}
     {phase === 'setup' ? <>
-      <div className="listening-intro"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG NGHE' : 'LUYỆN KỸ NĂNG NGHE'}</span><h3>{assessment ? 'Đánh giá nghe tổng quát' : 'Nghe, hiểu và trả lời'}</h3><p>{assessment ? 'Ba đoạn nghe gồm độc thoại, hội thoại và chỉ dẫn; tổng cộng 20 câu hỏi.' : 'Hai đoạn hội thoại, mỗi đoạn 5 câu hỏi.'}</p></div>
+      <div className="listening-intro"><span>{assessment ? 'ĐÁNH GIÁ KỸ NĂNG NGHE' : 'LUYỆN KỸ NĂNG NGHE'}</span><h3>{assessment ? 'Đánh giá nghe tổng quát' : 'Nghe, hiểu và trả lời'}</h3><p>{assessment ? 'Ba đoạn nghe gồm độc thoại, hội thoại và chỉ dẫn; mỗi đoạn 5 câu, tổng cộng 15 câu hỏi.' : 'Hai đoạn hội thoại, mỗi đoạn 5 câu hỏi.'}</p></div>
       {!assessment && <div className="listening-topic-grid">{topics.map(([id, label]) => <button type="button" key={id} className={topic === id ? 'active' : ''} onClick={() => setTopic(id)}>{label}</button>)}</div>}
-      {assessment && <p className="listening-hint">Độc thoại 7 câu · Hội thoại 7 câu · Chỉ dẫn 6 câu. Kết quả được lưu riêng để theo dõi tiến bộ nghe.</p>}
+      {assessment && <p className="listening-hint">Mỗi đoạn có 5 dạng câu cố định: trắc nghiệm, ghép thông tin, điền ghi chú, trả lời ngắn và hoàn thành câu. Kết quả được lưu riêng để theo dõi tiến bộ nghe.</p>}
       <button type="button" className="listening-primary" onClick={createLesson}>{assessment ? 'Bắt đầu đánh giá nghe' : 'Tạo bài nghe'} <Icon name="next" size={16} /></button>
       {error && <p className="listening-error" role="alert">{error}</p>}
       {recent.filter((attempt) => (attempt.topic === 'assessment') === assessment).length > 0 && <div className="listening-recent"><strong>{assessment ? 'Kết quả đánh giá nghe' : 'Kết quả luyện nghe gần đây'}</strong>{recent.filter((attempt) => (attempt.topic === 'assessment') === assessment).slice(0, 5).map((attempt) => <div key={attempt.id}><span>{attempt.title} <small>· {attempt.level} · {attempt.at?.slice(0, 10)}</small></span><b>{attempt.correct}/{attempt.total}</b></div>)}</div>}
@@ -4903,7 +4919,7 @@ function AssessmentProgressChart({ attempts, listening = false, title = null, de
         </g>)}
       </svg>
     </div>
-    <p>{description || (listening ? 'Mỗi điểm là một bài nghe 20 câu. Hãy so sánh điểm trong cùng mức đề.' : 'Mỗi điểm là một bài đánh giá. Nét đứt báo hiệu chuyển mức đề; hãy so sánh điểm trong cùng mức.')}</p>
+    <p>{description || (listening ? 'Mỗi điểm là một bài đánh giá nghe. Hãy so sánh điểm trong cùng mức đề.' : 'Mỗi điểm là một bài đánh giá. Nét đứt báo hiệu chuyển mức đề; hãy so sánh điểm trong cùng mức.')}</p>
   </div>
 }
 
@@ -4921,7 +4937,7 @@ function AssessmentHub({ profileId, onExit, onStartKnowledge, onStartListening, 
     <header className="progress-header"><div><span className="progress-eyebrow">HỌC TẬP CÙNG AI / KIỂM TRA</span><h1>Kiểm tra tổng quát</h1><p>Chọn phần muốn đánh giá. Kết quả của hai bài được theo dõi riêng trong mục Tiến bộ.</p></div><button type="button" className="progress-back" onClick={onExit} aria-label="Quay lại"><Icon name="back" size={16} /></button></header>
     <div className="assessment-hub-grid">
       <article className="assessment-hub-card"><span>01 · KIẾN THỨC NGÔN NGỮ</span><h2>Ngữ pháp, từ vựng và đọc hiểu</h2><p>40 câu từ dễ đến khó. Kết quả giúp theo dõi mức độ nắm vững cấu trúc và từ vựng.</p><div className="assessment-hub-card-footer"><small>{knowledge ? `Lần gần nhất: ${knowledge.correct}/${knowledge.total} · ${Math.round(knowledge.correct / knowledge.total * 100)}%` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={() => onStartKnowledge(knowledge)}>Làm bài đánh giá <Icon name="next" size={15} /></button></div></article>
-      <article className="assessment-hub-card"><span>02 · KỸ NĂNG NGHE</span><h2>Nghe hiểu</h2><p>20 câu qua ba đoạn: độc thoại, hội thoại và chỉ dẫn. Nghe từng đoạn rồi trả lời.</p><div className="assessment-hub-card-footer"><small>{listening ? `Lần gần nhất: ${listening.correct}/${listening.total} · ${Math.round(listening.correct / listening.total * 100)}%` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartListening}>Làm bài đánh giá nghe <Icon name="next" size={15} /></button></div></article>
+      <article className="assessment-hub-card"><span>02 · KỸ NĂNG NGHE</span><h2>Nghe hiểu</h2><p>15 câu qua ba đoạn, mỗi đoạn 5 dạng câu cố định. Nghe từng đoạn rồi trả lời.</p><div className="assessment-hub-card-footer"><small>{listening ? `Lần gần nhất: ${listening.correct}/${listening.total} · ${Math.round(listening.correct / listening.total * 100)}%` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartListening}>Làm bài đánh giá nghe <Icon name="next" size={15} /></button></div></article>
       <article className="assessment-hub-card"><span>03 · KỸ NĂNG NÓI</span><h2>Nói theo câu hỏi</h2><p>Trả lời ba câu hỏi qua micro. Kết quả đánh giá cách diễn đạt từ transcript nhận diện được.</p><div className="assessment-hub-card-footer"><small>{speaking ? `Lần gần nhất: ${speaking.overall}/100` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartSpeaking}>Làm bài đánh giá nói <Icon name="next" size={15} /></button></div></article>
       <article className="assessment-hub-card"><span>04 · KỸ NĂNG VIẾT</span><h2>Viết theo đề</h2><p>Viết một đoạn theo đề cố định. AI chấm hoàn thành đề, ngữ pháp, từ vựng và mạch lạc.</p><div className="assessment-hub-card-footer"><small>{writing ? `Lần gần nhất: ${writing.overall}/100` : 'Chưa có kết quả'}</small><button type="button" className="listening-primary" onClick={onStartWriting}>Làm bài đánh giá viết <Icon name="next" size={15} /></button></div></article>
     </div>
@@ -5126,7 +5142,7 @@ function ProgressScreen({ profileId, profile, onExit, onOpenStructures }) {
 
       <div className={`progress-card progress-card-assessment${assessmentSlide === 1 ? ' is-active' : ''}`} aria-hidden={assessmentSlide !== 1} style={{ ...progressStyles.card, padding: '18px' }}>
         <div style={progressStyles.cardTitle}>Đánh giá kỹ năng nghe</div>
-        <div style={progressStyles.cardSub}>20 câu · độc thoại, hội thoại và chỉ dẫn</div>
+        <div style={progressStyles.cardSub}>15 câu · 3 đoạn, mỗi đoạn 5 câu</div>
         {listeningAssessments.length ? <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, padding: '12px 14px', borderRadius: 12, background: 'var(--surface-soft)' }}>
             <span style={{ color: 'var(--text-muted)', fontSize: fs(12) }}>LẦN GẦN NHẤT · {listeningAssessments[0].at?.slice(0, 10)}</span>
@@ -9666,18 +9682,40 @@ function SettingsModal({ settings, onChange, onClose, profileId, levelControl })
   const [clearingMemory, setClearingMemory] = useState(false)
   const [memoryMessage, setMemoryMessage] = useState('')
   const [voicePreview, setVoicePreview] = useState('')
+  const [voicePreviewLoading, setVoicePreviewLoading] = useState(false)
   const [showLearnerNotes, setShowLearnerNotes] = useState(false)
 
+  useEffect(() => {
+    if (!voicePreviewLoading) return
+    return window.api?.onLocalSpeechProgress?.((progress) => {
+      if (progress?.status === 'progress' && Number.isFinite(progress.progress)) {
+        setVoicePreview(`Đang tải mô hình Kokoro${progress.file ? ` · ${progress.file}` : ''} · ${Math.round(progress.progress)}%`)
+      } else {
+        setVoicePreview('Đang tải và khởi tạo mô hình Kokoro…')
+      }
+    })
+  }, [voicePreviewLoading])
+
   const previewVoice = async () => {
+    if (voicePreviewLoading) return
+    setVoicePreviewLoading(true)
     setVoicePreview('Đang tải và phát giọng AI Kokoro… lần đầu có thể mất một chút thời gian.')
-    const result = await previewKokoroVoice(
-      'Hi! It is nice to meet you. What would you like to talk about today?',
-      settings.speechVoice || 'af_heart',
-      () => setVoicePreview('Đã phát xong giọng AI Kokoro.')
-    )
-    if (!result.success && !result.cancelled) {
-      console.error('Kokoro voice preview failed:', result.error)
-      setVoicePreview(`Không phát được giọng AI Kokoro (${result.error}). Không dùng giọng TTS mặc định.`)
+    try {
+      const result = await previewKokoroVoice(
+        'Hi! It is nice to meet you. What would you like to talk about today?',
+        settings.speechVoice || 'af_heart',
+        () => setVoicePreview('Đã phát xong giọng AI Kokoro.')
+      )
+      if (!result.success && !result.cancelled) {
+        console.error('Kokoro voice preview failed:', result.error)
+        setVoicePreview(
+          result.error === 'LOCAL_TTS_MODEL_DOWNLOAD_FAILED'
+            ? 'Không tải được mô hình Kokoro. Hãy kiểm tra kết nối Internet rồi bấm thử lại.'
+            : `Không phát được giọng AI Kokoro (${result.error}). Không dùng giọng TTS mặc định.`
+        )
+      }
+    } finally {
+      setVoicePreviewLoading(false)
     }
   }
 
@@ -9788,8 +9826,8 @@ function SettingsModal({ settings, onChange, onClose, profileId, levelControl })
               <option value="bf_emma">Emma · Anh, nữ</option>
               <option value="bm_george">George · Anh, nam</option>
             </select>
-            <button type="button" className="qghost" style={{ ...quizStyles.ghost, padding: '8px 12px', fontSize: fs(13) }} onClick={previewVoice}>
-              Nghe thử giọng
+            <button type="button" className="qghost" style={{ ...quizStyles.ghost, padding: '8px 12px', fontSize: fs(13) }} onClick={previewVoice} disabled={voicePreviewLoading}>
+              {voicePreviewLoading ? 'Đang tải…' : 'Tải và nghe thử'}
             </button>
           </div>
         </div>

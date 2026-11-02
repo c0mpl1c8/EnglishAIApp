@@ -338,7 +338,7 @@ body {
   cursor: pointer;
 }
 
-.assessment-hub { min-height: 100vh; padding: clamp(24px, 4vw, 56px); background: var(--bg); color: var(--text); }
+.assessment-hub { width: 100%; height: 100vh; box-sizing: border-box; overflow-y: auto; overscroll-behavior-y: contain; padding: clamp(24px, 4vw, 56px); background: var(--bg); color: var(--text); }
 .assessment-hub .progress-header { max-width: 1100px; margin: 0 auto 26px; }
 .assessment-hub-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; max-width: 1100px; margin: 0 auto; }
 .assessment-hub-card { display: flex; flex-direction: column; min-height: 245px; padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
@@ -362,6 +362,12 @@ body {
 .speaking-assessment-result h3 { margin: 0 0 10px; }
 .speaking-assessment-result > div { display: flex; flex-wrap: wrap; gap: 10px; }
 .speaking-assessment-result > div span { padding: 9px 11px; border: 1px solid var(--border); border-radius: 9px; }
+.speaking-assessment-question-feedback { display: grid; gap: 8px; margin-top: 14px; padding: 16px; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface-soft); }
+.speaking-assessment-question-feedback h4 { margin: 0 0 8px; font-size: 16px; }
+.speaking-assessment-question-feedback p { margin: 5px 0; color: var(--text-soft); line-height: 1.55; overflow-wrap: anywhere; }
+.speaking-assessment-question-feedback p strong { color: var(--text); }
+.speaking-assessment-question-feedback > div:last-child > p { padding-top: 8px; border-top: 1px solid var(--border-soft); }
+.speaking-assessment-question-feedback small { display: block; margin-top: 3px; color: var(--text-muted); }
 .speaking-assessment-result > p:last-child { color: var(--text-muted); font-size: 12px; }
 
 .app-shell .chat-mic:hover:not(:disabled),
